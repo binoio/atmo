@@ -1,0 +1,106 @@
+# DISABLED: Use local build and upload script instead
+# See AppleTVRemoteApp/Scripts/upload_release.sh
+
+# name: Build, Notarize and Release
+# 
+# on:
+#   push:
+#     tags:
+#       - 'v*'
+#   workflow_dispatch:
+#     inputs:
+#       version:
+#         description: 'Version tag (e.g., v1.0.0)'
+#         required: false
+#         type: string
+
+# jobs:
+#   notarize:
+#     runs-on: macos-latest
+#     permissions:
+#       contents: write
+#       actions: write
+#       id-token: write
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v4
+# 
+#       - name: Set up Python venv
+#         run: |
+#           python3 -m venv .venv
+#           . .venv/bin/activate
+#           pip install --upgrade pip
+#           pip install -r pybridge/requirements.lock
+# 
+#       - name: Build app bundle
+#         run: |
+#           bash AppleTVRemoteApp/Scripts/release.sh
+# 
+#       - name: Restore secrets to files
+#         env:
+#           NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+#           DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+#         run: |
+#           echo "$NOTARY_KEY" | base64 --decode > /tmp/AuthKey.p8
+#           echo "$DEVELOPER_ID_P12" | base64 --decode > /tmp/DeveloperID.p12
+# 
+#       - name: Install Developer ID certificate into keychain
+#         env:
+#           DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+#         run: |
+#           security create-keychain -p actions build.keychain
+#           security import /tmp/DeveloperID.p12 -k build.keychain -P "$DEVELOPER_ID_CERT_PASSWORD" -T /usr/bin/codesign
+#           security list-keychains -s build.keychain
+#           security default-keychain -s build.keychain
+#           security unlock-keychain -p actions build.keychain
+# 
+#       - name: Get version
+#         id: version
+#         run: |
+#           if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version }}" ]; then
+#             VERSION="${{ github.event.inputs.version }}"
+#           elif [ "${{ github.ref_type }}" == "tag" ]; then
+#             VERSION="${GITHUB_REF#refs/tags/}"
+#           else
+#             VERSION="v1.0.0"
+#           fi
+#           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+#           echo "Version: ${VERSION}"
+# 
+#       - name: Notarize and release
+#         env:
+#           DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+#           NOTARY_KEY_PATH: "/tmp/AuthKey.p8"
+#           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+#           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#         run: |
+#           chmod +x AppleTVRemoteApp/Scripts/notarize_and_release.sh
+#           AppleTVRemoteApp/Scripts/notarize_and_release.sh
+#       
+#       - name: Upload release assets
+#         if: success()
+#         uses: softprops/action-gh-release@v1
+#         with:
+#           tag_name: ${{ steps.version.outputs.version }}
+#           name: Atmo ${{ steps.version.outputs.version }}
+#           body: |
+#             ## Atmo ${{ steps.version.outputs.version }}
+#             
+#             ### Installation
+#             1. Download `Atmo-stapled.zip`
+#             2. Unzip and drag Atmo.app to your Applications folder
+#             3. Launch Atmo
+#             
+#             This release is signed and notarized with Apple Developer ID.
+#           files: |
+#             AppleTVRemoteApp/dist/Atmo-stapled.zip
+#           draft: false
+#           prerelease: false
+#         env:
+#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+# 
+#       - name: Cleanup keychain
+#         if: always()
+#         run: |
+#           security delete-keychain build.keychain || true

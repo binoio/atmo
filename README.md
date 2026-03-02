@@ -64,3 +64,7 @@ Access File ▸ Print Discovered Devices (`⌘P`) for a printable summary of hos
 
 Use `bash AppleTVRemoteApp/Scripts/release.sh` to build an `.app` bundle in `dist/` with the vendored Python environment.
 
+### Signed Releases
+
+For distribution outside the Mac App Store, Atmo supports code signing and notarization with Apple Developer ID. See [docs/SIGNING.md](docs/SIGNING.md) for setup instructions.
+

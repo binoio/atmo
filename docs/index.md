@@ -8,10 +8,16 @@ description: Atmo is a macOS app for discovering and controlling Apple TV device
   <div class="container">
     <h1>Atmo - Apple TV Remote</h1>
     <p>Atmo is a macOS app for discovering and controlling Apple TV devices.</p>
-    <a href="https://github.com/mabino/atmo" class="btn" target="_blank">
-      <i class="fab fa-github"></i>
-      View on GitHub
-    </a>
+    <div class="hero-actions">
+      <a href="https://github.com/mabino/atmo/releases/latest/download/Atmo-stapled.zip" class="btn btn-primary">
+        <i class="fas fa-download"></i>
+        Download Latest
+      </a>
+      <a href="https://github.com/mabino/atmo" class="btn btn-ghost" target="_blank">
+        <i class="fab fa-github"></i>
+        View on GitHub
+      </a>
+    </div>
   </div>
 </section>
 

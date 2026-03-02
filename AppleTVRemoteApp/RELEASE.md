@@ -20,6 +20,8 @@ The script performs the following:
 3. Creates an `Atmo.app` bundle containing the executable and embedded Python resources.
 4. Archives the bundle into `dist/Atmo.zip`.
 
+After producing the unsigned distribution, see NOTARIZE.md for instructions and an automated script to codesign, notarize, staple, and publish a notarized release via GitHub.
+
 ## Installing the bundle
 
 1. Extract `dist/Atmo.zip` to your desired destination (for example `/Applications`).
