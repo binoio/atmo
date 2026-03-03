@@ -125,6 +125,8 @@ DIST_DIR="${ROOT_DIR}/dist"
 ZIP_NAME="Atmo.zip"
 NOTARIZE_ZIP="Atmo-notarize.zip"
 STAPLED_ZIP="Atmo-stapled.zip"
+RELEASE_ZIP="Atmo.zip"
+RELEASE_DMG="Atmo.dmg"
 
 # Parse options
 SKIP_UPLOAD=false
@@ -287,6 +289,52 @@ print_header "${LOCK} Code Signing"
 
 print_step 2 5 "Signing app with Developer ID..."
 
+# First, sign all embedded binaries (Python framework, .so files, dylibs)
+# These must be signed with hardened runtime before the app bundle
+print_info "Signing embedded binaries with hardened runtime..."
+
+SIGN_COUNT=0
+PYTHON_RESOURCES="${APP_BUNDLE}/Contents/Resources/Python"
+PYTHON_DIR="${PYTHON_RESOURCES}/python-framework"
+
+# Sign all .so and .dylib files first
+while IFS= read -r -d '' binary; do
+    if file "$binary" | grep -qE "Mach-O|bundle"; then
+        codesign --force --options runtime --timestamp --sign "${DEVELOPER_ID_APPLICATION}" "$binary" 2>/dev/null && ((SIGN_COUNT++)) || true
+    fi
+done < <(find "${PYTHON_RESOURCES}" -type f \( -name "*.so" -o -name "*.dylib" \) -print0 2>/dev/null)
+
+# Sign venv python executables
+while IFS= read -r -d '' binary; do
+    if file "$binary" | grep -qE "Mach-O"; then
+        codesign --force --options runtime --timestamp --sign "${DEVELOPER_ID_APPLICATION}" "$binary" 2>/dev/null && ((SIGN_COUNT++)) || true
+    fi
+done < <(find "${PYTHON_RESOURCES}/.venv/bin" -type f -print0 2>/dev/null)
+
+# Sign python-framework binaries (not a bundle, just individual files)
+if [[ -d "${PYTHON_DIR}" ]]; then
+    print_info "Signing python-framework binaries..."
+    
+    # Sign all Mach-O binaries inside
+    while IFS= read -r -d '' binary; do
+        if file "$binary" | grep -qE "Mach-O"; then
+            codesign --force --options runtime --timestamp --sign "${DEVELOPER_ID_APPLICATION}" "$binary" 2>/dev/null && ((SIGN_COUNT++)) || true
+        fi
+    done < <(find "${PYTHON_DIR}" -type f \( -perm +111 -o -name "*.dylib" \) -print0 2>/dev/null)
+    
+    # Sign Python.app inside if it exists
+    PYTHON_APP="${PYTHON_DIR}/Resources/Python.app"
+    if [[ -d "${PYTHON_APP}" ]]; then
+        print_info "Signing Python.app..."
+        codesign --force --options runtime --deep --timestamp --sign "${DEVELOPER_ID_APPLICATION}" "${PYTHON_APP}"
+        ((SIGN_COUNT++))
+    fi
+fi
+
+print_success "Signed ${SIGN_COUNT} embedded binaries"
+
+# Now sign the main app bundle
+print_info "Signing main app bundle..."
 codesign --force --options runtime --deep --timestamp --sign "${DEVELOPER_ID_APPLICATION}" "${APP_BUNDLE}" 2>&1 | while read line; do
     print_info "$line"
 done
@@ -308,7 +356,7 @@ print_step 3 5 "Creating ZIP archive for notarization..."
 
 pushd "${TMPDIR}" >/dev/null
 rm -f "${DIST_DIR}/${NOTARIZE_ZIP}"
-zip -r "${DIST_DIR}/${NOTARIZE_ZIP}" "Atmo.app" >/dev/null
+zip -r -y "${DIST_DIR}/${NOTARIZE_ZIP}" "Atmo.app" >/dev/null
 popd >/dev/null
 
 ZIP_SIZE=$(du -h "${DIST_DIR}/${NOTARIZE_ZIP}" | cut -f1)
@@ -369,6 +417,35 @@ popd >/dev/null
 rm -rf "${DIST_DIR}/Atmo.app"
 cp -R "${APP_BUNDLE}" "${DIST_DIR}/"
 
+# Create final release ZIP (cleaner name for distribution)
+print_info "Creating release package ${RELEASE_ZIP}..."
+rm -f "${DIST_DIR}/${RELEASE_ZIP}"
+cp "${DIST_DIR}/${STAPLED_ZIP}" "${DIST_DIR}/${RELEASE_ZIP}"
+print_success "Created ${RELEASE_ZIP}"
+
+# Create DMG for release
+print_info "Creating DMG package ${RELEASE_DMG}..."
+rm -f "${DIST_DIR}/${RELEASE_DMG}"
+if command -v hdiutil >/dev/null 2>&1; then
+    # Create a temporary DMG staging folder
+    DMG_STAGING="${ROOT_DIR}/_dmg_staging"
+    rm -rf "${DMG_STAGING}"
+    mkdir -p "${DMG_STAGING}"
+    cp -R "${DIST_DIR}/Atmo.app" "${DMG_STAGING}/"
+    
+    # Create symbolic link to /Applications for drag-and-drop install
+    ln -s /Applications "${DMG_STAGING}/Applications"
+    
+    # Create DMG
+    hdiutil create -volname "Atmo" -srcfolder "${DMG_STAGING}" \
+        -ov -format UDZO "${DIST_DIR}/${RELEASE_DMG}" >/dev/null 2>&1
+    
+    rm -rf "${DMG_STAGING}"
+    print_success "Created ${RELEASE_DMG}"
+else
+    print_warning "hdiutil not found, skipping DMG creation"
+fi
+
 # Extract version for release tag
 PLIST="${APP_BUNDLE}/Contents/Info.plist"
 if command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
@@ -391,7 +468,8 @@ echo -e "${GREEN}║${RESET}                                                    
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
 echo -e "  ${CYAN}${ARROW}${RESET} Notarized app: ${WHITE}${DIST_DIR}/Atmo.app${RESET}"
-echo -e "  ${CYAN}${ARROW}${RESET} Stapled zip:   ${WHITE}${DIST_DIR}/${STAPLED_ZIP}${RESET}"
+echo -e "  ${CYAN}${ARROW}${RESET} Release ZIP:   ${WHITE}${DIST_DIR}/${RELEASE_ZIP}${RESET}"
+echo -e "  ${CYAN}${ARROW}${RESET} Release DMG:   ${WHITE}${DIST_DIR}/${RELEASE_DMG}${RESET}"
 echo ""
 echo -e "  ${DIM}The app is ready for distribution outside the Mac App Store.${RESET}"
 echo -e "  ${DIM}Users will not see Gatekeeper warnings when opening Atmo.${RESET}"

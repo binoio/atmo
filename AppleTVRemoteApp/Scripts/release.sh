@@ -63,7 +63,8 @@ fi
 echo "APPL????" > "${CONTENTS_DIR}/PkgInfo"
 
 pushd "${DIST_DIR}" >/dev/null
-zip -r "${ARTIFACT_NAME}.zip" "${ARTIFACT_NAME}.app" >/dev/null
+rm -f "${ARTIFACT_NAME}.zip"
+zip -r -y "${ARTIFACT_NAME}.zip" "${ARTIFACT_NAME}.app" >/dev/null
 popd >/dev/null
 
 echo "Release package created at ${DIST_DIR}/${ARTIFACT_NAME}.zip"

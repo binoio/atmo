@@ -7,13 +7,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${ROOT_DIR}/dist"
 STAPLED_ZIP="${DIST_DIR}/Atmo-stapled.zip"
+RELEASE_ZIP="${DIST_DIR}/Atmo.zip"
+RELEASE_DMG="${DIST_DIR}/Atmo.dmg"
 PLIST="${DIST_DIR}/Atmo.app/Contents/Info.plist"
 
 show_help() {
     cat <<EOF
 Usage: $0 [OPTIONS] <version>
 
-Creates a GitHub release and uploads the locally built stapled app.
+Creates a GitHub release with git tag and uploads the locally built notarized app.
 
 Arguments:
   version           Version tag (e.g., v1.0.0)
@@ -22,6 +24,7 @@ Options:
   --draft           Create as draft release
   --prerelease      Mark as pre-release
   --notes FILE      Use custom release notes from file
+  --no-tag          Skip git tag creation (use if tag already exists)
   --help            Show this help message
 
 Environment variables:
@@ -52,6 +55,7 @@ EOF
 DRAFT=""
 PRERELEASE=""
 NOTES_FILE=""
+SKIP_TAG=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -66,6 +70,10 @@ while [[ $# -gt 0 ]]; do
         --notes)
             NOTES_FILE="$2"
             shift 2
+            ;;
+        --no-tag)
+            SKIP_TAG=true
+            shift
             ;;
         --help|-h)
             show_help
@@ -115,14 +123,27 @@ else
     exit 1
 fi
 
-# Check if stapled zip exists
-if [[ ! -f "${STAPLED_ZIP}" ]]; then
-    echo "Error: Stapled release not found at ${STAPLED_ZIP}" >&2
+# Check for release assets (prefer release ZIP over stapled ZIP)
+if [[ -f "${RELEASE_ZIP}" ]]; then
+    PRIMARY_ASSET="${RELEASE_ZIP}"
+    echo "✓ Found release package: Atmo.zip"
+elif [[ -f "${STAPLED_ZIP}" ]]; then
+    PRIMARY_ASSET="${STAPLED_ZIP}"
+    echo "✓ Found stapled package: Atmo-stapled.zip"
+else
+    echo "Error: No release package found at ${RELEASE_ZIP} or ${STAPLED_ZIP}" >&2
     echo "" >&2
     echo "Build and notarize the app first:" >&2
     echo "  cd ${ROOT_DIR}" >&2
     echo "  ./Scripts/notarize_and_release.sh" >&2
     exit 1
+fi
+
+# Check for DMG
+ASSETS="${PRIMARY_ASSET}"
+if [[ -f "${RELEASE_DMG}" ]]; then
+    ASSETS="${ASSETS} ${RELEASE_DMG}"
+    echo "✓ Found DMG package: Atmo.dmg"
 fi
 
 # Verify the zip is actually notarized
@@ -131,7 +152,7 @@ TMPDIR="${ROOT_DIR}/_verify_tmp"
 rm -rf "${TMPDIR}"
 mkdir -p "${TMPDIR}"
 
-unzip -q "${STAPLED_ZIP}" -d "${TMPDIR}"
+unzip -q "${PRIMARY_ASSET}" -d "${TMPDIR}"
 APP_BUNDLE="${TMPDIR}/Atmo.app"
 
 if ! xcrun stapler validate "${APP_BUNDLE}" >/dev/null 2>&1; then
@@ -157,9 +178,39 @@ if [[ -f "${PLIST}" ]]; then
 fi
 
 # Get file size
-FILE_SIZE=$(du -h "${STAPLED_ZIP}" | awk '{print $1}')
+FILE_SIZE=$(du -h "${PRIMARY_ASSET}" | awk '{print $1}')
 echo "✓ Package size: ${FILE_SIZE}"
 echo ""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Git Tag
+# ══════════════════════════════════════════════════════════════════════════════
+
+if [[ "$SKIP_TAG" != "true" ]]; then
+    echo "==> Creating git tag ${VERSION}..."
+    
+    # Check if tag already exists
+    if git rev-parse "${VERSION}" >/dev/null 2>&1; then
+        echo "Warning: Tag ${VERSION} already exists" >&2
+        echo "Use --no-tag to skip tag creation, or delete the existing tag first." >&2
+        echo "Continue without creating tag? (y/N) " >&2
+        read -r response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            rm -rf "${TMPDIR}"
+            exit 1
+        fi
+    else
+        # Create annotated tag
+        git tag -a "${VERSION}" -m "Release ${VERSION}"
+        echo "✓ Created git tag: ${VERSION}"
+        
+        # Push tag to remote
+        echo "==> Pushing tag to remote..."
+        git push origin "${VERSION}"
+        echo "✓ Pushed tag to origin"
+    fi
+    echo ""
+fi
 
 # Generate or use custom release notes
 if [[ -n "${NOTES_FILE}" ]]; then
@@ -173,8 +224,15 @@ else
 ## Atmo ${VERSION}
 
 ### Installation
-1. Download \`Atmo-stapled.zip\`
+
+**Option 1: ZIP** (Recommended)
+1. Download \`Atmo.zip\`
 2. Unzip and drag Atmo.app to your Applications folder
+3. Launch Atmo
+
+**Option 2: DMG**
+1. Download \`Atmo.dmg\`
+2. Open the DMG and drag Atmo to the Applications folder
 3. Launch Atmo
 
 This release is **signed and notarized** with Apple Developer ID.
@@ -193,8 +251,9 @@ fi
 # Create release using gh CLI or API
 if [[ "$USE_GH_CLI" == "true" ]]; then
     echo "==> Creating release with GitHub CLI..."
+    # shellcheck disable=SC2086
     gh release create "${VERSION}" \
-        "${STAPLED_ZIP}" \
+        ${ASSETS} \
         --title "Atmo ${VERSION}" \
         --notes "${RELEASE_NOTES}" \
         ${DRAFT} \
@@ -230,15 +289,25 @@ JSON
     fi
     
     echo "✓ Release created"
-    echo "==> Uploading asset..."
+    echo "==> Uploading assets..."
     
+    # Upload ZIP
     curl -s -X POST \
         -H "Authorization: token ${GITHUB_TOKEN}" \
         -H "Content-Type: application/zip" \
-        --data-binary "@${STAPLED_ZIP}" \
-        "${UPLOAD_URL}?name=Atmo-stapled.zip" > /dev/null
+        --data-binary "@${PRIMARY_ASSET}" \
+        "${UPLOAD_URL}?name=Atmo.zip" > /dev/null
+    echo "✓ Uploaded Atmo.zip"
     
-    echo "✓ Asset uploaded"
+    # Upload DMG if available
+    if [[ -f "${RELEASE_DMG}" ]]; then
+        curl -s -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@${RELEASE_DMG}" \
+            "${UPLOAD_URL}?name=Atmo.dmg" > /dev/null
+        echo "✓ Uploaded Atmo.dmg"
+    fi
 fi
 
 # Cleanup

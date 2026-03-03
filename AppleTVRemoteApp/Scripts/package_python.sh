@@ -54,23 +54,37 @@ print(pathlib.Path(sys.executable).resolve().parents[3])
 PY
 )"
 
-FRAMEWORK_DEST="${BUNDLE_DIR}/Python3.framework"
+FRAMEWORK_DEST="${BUNDLE_DIR}/python-framework"
 
 if [[ ! -d "${FRAMEWORK_SRC}" ]]; then
   echo "Could not resolve Python framework directory from ${SOURCE_VENV} (expected ${FRAMEWORK_SRC})." >&2
   exit 1
 fi
 
-rsync -a --delete "${FRAMEWORK_SRC}/" "${FRAMEWORK_DEST}/"
-ln -sf "../Python3.framework/Python3" "${TARGET_VENV}/Python3"
+# Copy and flatten the framework - renamed to avoid bundle detection by codesign
+# The ".framework" suffix triggers bundle signing logic which fails on flattened structure
+rm -rf "${FRAMEWORK_DEST}"
+mkdir -p "${FRAMEWORK_DEST}"
+
+# Copy the actual versioned content directly
+FRAMEWORK_VERSION_DIR="${FRAMEWORK_SRC}/Versions/3.9"
+if [[ -d "${FRAMEWORK_VERSION_DIR}" ]]; then
+    cp -R "${FRAMEWORK_VERSION_DIR}/"* "${FRAMEWORK_DEST}/"
+else
+    cp -R "${FRAMEWORK_SRC}/"* "${FRAMEWORK_DEST}/"
+fi
+
+# Remove bundle metadata files that confuse codesign
+rm -rf "${FRAMEWORK_DEST}/Resources/Info.plist" 2>/dev/null || true
+rm -rf "${FRAMEWORK_DEST}/_CodeSignature" 2>/dev/null || true
+ln -sf "../python-framework/Python3" "${TARGET_VENV}/Python3"
 
 
 PY_MAJOR_MINOR="${ACTUAL_PYTHON_VERSION%.*}"
 
-# Normalise pyvenv.cfg to avoid leaking developer-specific paths while keeping the
-# interpreter aware of the bundled framework.
+# Normalise pyvenv.cfg to reference the flattened python directory
 cat > "${TARGET_VENV}/pyvenv.cfg" <<EOF
-home = ../Python3.framework/Versions/${PY_MAJOR_MINOR}/bin
+home = ../python-framework/bin
 include-system-site-packages = false
 version = ${ACTUAL_PYTHON_VERSION}
 EOF
