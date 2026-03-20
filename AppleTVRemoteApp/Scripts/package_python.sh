@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="$(cd "${SCRIPTS_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${APP_ROOT}/.." && pwd)"
+
 SOURCE_VENV="${REPO_ROOT}/.venv"
 LOCKFILE="${REPO_ROOT}/pybridge/requirements.lock"
 PYTHON_VERSION_FILE="${REPO_ROOT}/pybridge/python-version.txt"
-BUNDLE_DIR="${ROOT_DIR}/Sources/Atmo/Resources/Python"
+BUNDLE_DIR="${APP_ROOT}/Sources/Atmo/Resources/Python"
 TARGET_VENV="${BUNDLE_DIR}/.venv"
 
 if [[ ! -x "${SOURCE_VENV}/bin/python" ]]; then
