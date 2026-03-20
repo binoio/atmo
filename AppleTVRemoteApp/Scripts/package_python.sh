@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
 SOURCE_VENV="${REPO_ROOT}/.venv"
 LOCKFILE="${REPO_ROOT}/pybridge/requirements.lock"
@@ -25,16 +25,18 @@ if [[ ! -f "${PYTHON_VERSION_FILE}" ]]; then
   exit 1
 fi
 
-EXPECTED_PYTHON_VERSION="$(tr -d '[:space:]' < "${PYTHON_VERSION_FILE}")"
-
 ACTUAL_PYTHON_VERSION="$(${SOURCE_VENV}/bin/python - <<'PY'
-import platform
-print(platform.python_version())
+import sys
+v = sys.version_info
+print(f"{v.major}.{v.minor}")
 PY
 )"
 
+EXPECTED_PYTHON_VERSION_FULL="$(tr -d '[:space:]' < "${PYTHON_VERSION_FILE}")"
+EXPECTED_PYTHON_VERSION="$(echo "${EXPECTED_PYTHON_VERSION_FULL}" | cut -d. -f1,2)"
+
 if [[ "${ACTUAL_PYTHON_VERSION}" != "${EXPECTED_PYTHON_VERSION}" ]]; then
-  echo "Python version mismatch: expected ${EXPECTED_PYTHON_VERSION}, found ${ACTUAL_PYTHON_VERSION}" >&2
+  echo "Python version mismatch: expected ${EXPECTED_PYTHON_VERSION}.x, found ${ACTUAL_PYTHON_VERSION}" >&2
   echo "Recreate .venv with the correct interpreter before packaging." >&2
   exit 1
 fi
@@ -67,7 +69,7 @@ rm -rf "${FRAMEWORK_DEST}"
 mkdir -p "${FRAMEWORK_DEST}"
 
 # Copy the actual versioned content directly
-FRAMEWORK_VERSION_DIR="${FRAMEWORK_SRC}/Versions/3.9"
+FRAMEWORK_VERSION_DIR="${FRAMEWORK_SRC}/Versions/${ACTUAL_PYTHON_VERSION}"
 if [[ -d "${FRAMEWORK_VERSION_DIR}" ]]; then
     cp -R "${FRAMEWORK_VERSION_DIR}/"* "${FRAMEWORK_DEST}/"
 else
@@ -80,7 +82,7 @@ rm -rf "${FRAMEWORK_DEST}/_CodeSignature" 2>/dev/null || true
 ln -sf "../python-framework/Python3" "${TARGET_VENV}/Python3"
 
 
-PY_MAJOR_MINOR="${ACTUAL_PYTHON_VERSION%.*}"
+PY_MAJOR_MINOR="${ACTUAL_PYTHON_VERSION}"
 
 # Normalise pyvenv.cfg to reference the flattened python directory
 cat > "${TARGET_VENV}/pyvenv.cfg" <<EOF
