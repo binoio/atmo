@@ -34,7 +34,7 @@
 # 
 #       - name: Build app bundle
 #         run: |
-#           bash AppleTVRemoteApp/Scripts/release.sh
+#           ./ship build Release
 # 
 #       - name: Restore secrets to files
 #         env:
@@ -70,13 +70,13 @@
 #       - name: Notarize and release
 #         env:
 #           DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
-#           NOTARY_KEY_PATH: "/tmp/AuthKey.p8"
-#           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-#           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+#           APPLEID: ${{ secrets.APPLEID }}
+#           TEAM_ID: ${{ secrets.TEAM_ID }}
+#           APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
 #           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 #         run: |
-#           chmod +x AppleTVRemoteApp/Scripts/notarize_and_release.sh
-#           AppleTVRemoteApp/Scripts/notarize_and_release.sh
+#           ./ship notarize -y
+#           ./ship release -y
 #       
 #       - name: Upload release assets
 #         if: success()

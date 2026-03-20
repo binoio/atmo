@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>Atmo</string>
+  <key>CFBundleIdentifier</key>
+  <string>io.bino.atmo</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Atmo</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleSignature</key>
+  <string>ATMO</string>
+  <key>CFBundleIconFile</key>
+  <string>RemoteHelp</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>Atmo Remote Control</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>atmo</string>
+      </array>
+    </dict>
+  </array>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSSupportsAppIntents</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>© 2025 Michael Bino. Built with gratitude to the PyATV project. Atmo is an independent open-source project and is not affiliated with or endorsed by Apple Inc.</string>
+</dict>
+</plist>
