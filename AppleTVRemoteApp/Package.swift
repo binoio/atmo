@@ -16,6 +16,9 @@ let package = Package(
             path: "Sources/Atmo",
             resources: [
                 .copy("Resources")
+            ],
+            swiftSettings: [
+                .enableExperimentalFeature("IsolatedDeinit")
             ]
         ),
         .testTarget(
