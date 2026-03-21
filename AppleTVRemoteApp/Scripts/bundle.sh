@@ -54,5 +54,14 @@ else
 EOF
 fi
 
+# Determine version
+VERSION="${APP_VERSION:-1.0.0}"
+if [[ -z "${APP_VERSION:-}" && -f "${PROJECT_ROOT}/VERSION" ]]; then
+    VERSION=$(tr -d '[:space:]' < "${PROJECT_ROOT}/VERSION")
+fi
+
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "${CONTENTS_DIR}/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "${CONTENTS_DIR}/Info.plist"
+
 echo "APPL????" > "${CONTENTS_DIR}/PkgInfo"
-echo "✓ Bundle created at ${APP_BUNDLE}"
+echo "✓ Bundle created at ${APP_BUNDLE} (version $VERSION)"
