@@ -26,7 +26,19 @@ echo ""
 # Find compatible Python
 PYTHON_CMD=""
 
+# Check standalone .python/ first (from fetch_python.sh)
+STANDALONE="${REPO_ROOT}/.python/bin/python${EXPECTED_MAJOR_MINOR}"
+if [[ -x "$STANDALONE" ]]; then
+    VERSION=$("$STANDALONE" --version 2>&1 | awk '{print $2}')
+    VERSION_MAJOR_MINOR="${VERSION%.*}"
+    if [[ "$VERSION_MAJOR_MINOR" == "$EXPECTED_MAJOR_MINOR" ]]; then
+        PYTHON_CMD="$STANDALONE"
+        echo "✓ Found standalone Python ${VERSION} at: ${STANDALONE}"
+    fi
+fi
+
 # Check common locations for the exact version
+if [[ -z "$PYTHON_CMD" ]]; then
 for cmd in \
     "/usr/bin/python${EXPECTED_MAJOR_MINOR}" \
     "/usr/bin/python3" \
@@ -44,6 +56,7 @@ for cmd in \
         fi
     fi
 done
+fi
 
 # If exact match not found, find any compatible version
 if [[ -z "$PYTHON_CMD" ]]; then
@@ -74,15 +87,17 @@ if [[ -z "$PYTHON_CMD" ]]; then
     which -a python3 python3.* 2>/dev/null || echo "  (none found)" >&2
     echo "" >&2
     echo "Options:" >&2
-    echo "1. Install Python ${EXPECTED_MAJOR_MINOR} (recommended)" >&2
-    echo "2. Update pybridge/python-version.txt to match your Python version" >&2
+    echo "1. Run ./fetch_python.sh to download standalone Python ${EXPECTED_MAJOR_MINOR} (recommended)" >&2
+    echo "2. Install Python ${EXPECTED_MAJOR_MINOR} via your preferred method" >&2
+    echo "3. Update pybridge/python-version.txt to match your Python version" >&2
     exit 1
 fi
 
-# Check if venv exists with wrong version
+# Check if venv exists with wrong major.minor version
 if [[ -d "$VENV_DIR" ]]; then
     CURRENT_VERSION=$("${VENV_DIR}/bin/python" --version 2>&1 | awk '{print $2}' || echo "unknown")
-    if [[ "$CURRENT_VERSION" != "$EXPECTED_VERSION" ]]; then
+    CURRENT_MAJOR_MINOR="${CURRENT_VERSION%.*}"
+    if [[ "$CURRENT_MAJOR_MINOR" != "$EXPECTED_MAJOR_MINOR" ]]; then
         echo ""
         echo "⚠ Existing venv uses Python ${CURRENT_VERSION} (expected ${EXPECTED_VERSION})"
         echo "  Removing old venv..."

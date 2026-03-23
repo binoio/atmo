@@ -465,6 +465,13 @@ actor BridgeService: BridgeServiceProtocol {
         var overrides: [String: String] = [:]
         overrides["PYTHONUNBUFFERED"] = "1"
 
+        // Point PYTHONHOME at the embedded framework so standalone Python
+        // builds don't emit "Could not find platform dependent libraries" on stderr.
+        let frameworkDir = resourceDirectory.appendingPathComponent("python-framework", isDirectory: true)
+        if FileManager.default.fileExists(atPath: frameworkDir.path) {
+            overrides["PYTHONHOME"] = frameworkDir.path
+        }
+
         var pythonPaths: [String] = [resourceDirectory.path]
 
         let venvRoot = resourceDirectory.appendingPathComponent(".venv", isDirectory: true)
@@ -986,6 +993,11 @@ actor BridgeService: BridgeServiceProtocol {
         guard !message.isEmpty else { return true }
 
         if message.contains("NotOpenSSLWarning") {
+            return true
+        }
+
+        // Standalone Python builds emit this harmless warning on every launch.
+        if message.contains("Could not find platform dependent libraries") {
             return true
         }
 

@@ -13,7 +13,7 @@ TARGET_VENV="${BUNDLE_DIR}/.venv"
 
 if [[ ! -x "${SOURCE_VENV}/bin/python" ]]; then
   echo "Virtual environment not found at ${SOURCE_VENV}" >&2
-  echo "Run 'python3 -m venv .venv' and install dependencies before packaging." >&2
+  echo "Run './fetch_python.sh && ./setup_python_env.sh' to create it." >&2
   exit 1
 fi
 
@@ -54,34 +54,66 @@ TARGET_PIP="${TARGET_VENV}/bin/pip"
 FRAMEWORK_SRC="$(${SOURCE_VENV}/bin/python - <<'PY'
 import pathlib
 import sys
-print(pathlib.Path(sys.executable).resolve().parents[3])
+
+exe = pathlib.Path(sys.executable).resolve()
+
+# Homebrew / system Python lives inside a .framework:
+#   .../Python.framework/Versions/3.11/bin/python3.11
+# parents[3] gives the .framework root.
+for parent in exe.parents:
+    if parent.suffix == ".framework":
+        print(parent)
+        break
+else:
+    # Standalone (python-build-standalone) layout:
+    #   .python/bin/python3.11  with  .python/lib/libpython*.dylib
+    # The install root is the parent of bin/
+    print(exe.parent.parent)
 PY
 )"
 
 FRAMEWORK_DEST="${BUNDLE_DIR}/python-framework"
 
 if [[ ! -d "${FRAMEWORK_SRC}" ]]; then
-  echo "Could not resolve Python framework directory from ${SOURCE_VENV} (expected ${FRAMEWORK_SRC})." >&2
+  echo "Could not resolve Python install directory from ${SOURCE_VENV} (got ${FRAMEWORK_SRC})." >&2
   exit 1
 fi
 
-# Copy and flatten the framework - renamed to avoid bundle detection by codesign
-# The ".framework" suffix triggers bundle signing logic which fails on flattened structure
+# Copy the Python runtime into the bundle.
 rm -rf "${FRAMEWORK_DEST}"
 mkdir -p "${FRAMEWORK_DEST}"
 
-# Copy the actual versioned content directly
+# Detect layout: .framework/Versions/X.Y vs flat bin/lib
 FRAMEWORK_VERSION_DIR="${FRAMEWORK_SRC}/Versions/${ACTUAL_PYTHON_VERSION}"
 if [[ -d "${FRAMEWORK_VERSION_DIR}" ]]; then
+    # macOS framework — copy the versioned content directly
     cp -R "${FRAMEWORK_VERSION_DIR}/"* "${FRAMEWORK_DEST}/"
 else
+    # Standalone flat layout — copy bin, lib, include as-is
     cp -R "${FRAMEWORK_SRC}/"* "${FRAMEWORK_DEST}/"
 fi
 
 # Remove bundle metadata files that confuse codesign
 rm -rf "${FRAMEWORK_DEST}/Resources/Info.plist" 2>/dev/null || true
 rm -rf "${FRAMEWORK_DEST}/_CodeSignature" 2>/dev/null || true
-ln -sf "../python-framework/Python3" "${TARGET_VENV}/Python3"
+
+# Ensure the target venv python binary can find libpython via @rpath.
+# The binary's rpath is @executable_path/../lib so we need lib/ relative to bin/.
+# For standalone builds this is already the case inside python-framework/.
+# For the venv copy, ensure the lib dir with libpython is reachable.
+DYLIB_NAME="libpython${ACTUAL_PYTHON_VERSION}.dylib"
+if [[ -f "${FRAMEWORK_DEST}/lib/${DYLIB_NAME}" ]]; then
+    # Make sure the venv binary's rpath can resolve: create lib/ symlink next to venv bin/
+    mkdir -p "${TARGET_VENV}/lib"
+    ln -sf "../../python-framework/lib/${DYLIB_NAME}" "${TARGET_VENV}/lib/${DYLIB_NAME}"
+fi
+
+# Legacy framework symlink (some code paths look for Python3 binary)
+if [[ -f "${FRAMEWORK_DEST}/bin/python3" ]]; then
+    ln -sf "../python-framework/bin/python3" "${TARGET_VENV}/Python3"
+elif [[ -f "${FRAMEWORK_DEST}/Python3" ]]; then
+    ln -sf "../python-framework/Python3" "${TARGET_VENV}/Python3"
+fi
 
 
 PY_MAJOR_MINOR="${ACTUAL_PYTHON_VERSION}"
@@ -94,7 +126,8 @@ version = ${ACTUAL_PYTHON_VERSION}
 EOF
 
 # Reinstall dependencies from the lockfile and remove extras.
-"${TARGET_PIP}" install --no-cache-dir --upgrade pip
+# Use python -m pip to avoid stale shebangs in the copied pip script.
+"${TARGET_PYTHON}" -m pip install --no-cache-dir --upgrade pip
 
 "${TARGET_PYTHON}" - <<PY
 import pathlib
