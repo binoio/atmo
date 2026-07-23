@@ -97,6 +97,8 @@ fi
 rm -rf "${FRAMEWORK_DEST}/Resources/Info.plist" 2>/dev/null || true
 rm -rf "${FRAMEWORK_DEST}/_CodeSignature" 2>/dev/null || true
 
+export PYTHONHOME="${FRAMEWORK_DEST}"
+
 # Ensure the target venv python binary can find libpython via @rpath.
 # The binary's rpath is @executable_path/../lib so we need lib/ relative to bin/.
 # For standalone builds this is already the case inside python-framework/.

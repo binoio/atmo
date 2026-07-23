@@ -148,6 +148,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="SingleTap",
         help="Input action for directional/menu/home/select commands (SingleTap, DoubleTap, Hold).",
     )
+    command_parser.add_argument(
+        "--protocol",
+        choices=[name for name in Protocol.__members__.keys()],
+        help="Filter control to a specific protocol (e.g. Companion).",
+    )
     command_parser.set_defaults(handler=_handle_command)
 
     power_parser = subparsers.add_parser("power", help="Send a power action")
@@ -161,6 +166,11 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=["on", "off", "status"],
         help="Power action to perform.",
+    )
+    power_parser.add_argument(
+        "--protocol",
+        choices=[name for name in Protocol.__members__.keys()],
+        help="Filter power action to a specific protocol (e.g. Companion).",
     )
     power_parser.set_defaults(handler=_handle_power)
 
@@ -177,6 +187,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--identifier",
         required=True,
         help="Identifier (id/name/address) of the device to control.",
+    )
+    session_parser.add_argument(
+        "--protocol",
+        choices=[name for name in Protocol.__members__.keys()],
+        help="Filter session control to a specific protocol (e.g. Companion).",
     )
     session_parser.set_defaults(handler=_handle_session)
 
@@ -329,6 +344,7 @@ async def _handle_command(args: argparse.Namespace) -> int:
         identifier=args.identifier,
         command=args.command,
         action=args.action,
+        protocol=args.protocol,
         storage_path=args.storage,
         use_storage=not args.no_storage,
         mock=args.mock,
@@ -347,6 +363,7 @@ async def _handle_power(args: argparse.Namespace) -> int:
     options = PowerOptions(
         identifier=args.identifier,
         action=args.action,
+        protocol=args.protocol,
         storage_path=args.storage,
         use_storage=not args.no_storage,
         mock=args.mock,
@@ -364,6 +381,7 @@ async def _handle_power(args: argparse.Namespace) -> int:
 async def _handle_session(args: argparse.Namespace) -> int:
     options = SessionOptions(
         identifier=args.identifier,
+        protocol=args.protocol,
         storage_path=args.storage,
         use_storage=not args.no_storage,
         mock=args.mock,

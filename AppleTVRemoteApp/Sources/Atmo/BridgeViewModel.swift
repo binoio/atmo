@@ -18,8 +18,8 @@ enum PowerStateStatus: String, Codable {
 
     init?(stateDescription: String) {
         let normalized = stateDescription.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let onCandidates: Set<String> = ["on", "powerstate.on", "powered on", "1"]
-        let offCandidates: Set<String> = ["off", "powerstate.off", "powered off", "0"]
+        let onCandidates: Set<String> = ["on", "powerstate.on", "powered on", "1", "awake", "idle", "screensaver"]
+        let offCandidates: Set<String> = ["off", "powerstate.off", "powered off", "0", "asleep", "standby", "sleeping"]
 
         if onCandidates.contains(normalized) || normalized.hasSuffix(".on") {
             self = .on
