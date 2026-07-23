@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import sys
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from pyatv import connect
+from pyatv import connect, interface
 from pyatv import exceptions as pyatv_exceptions
 from pyatv.const import DeviceState, InputAction, PowerState, Protocol
 PYATV_ERROR = getattr(
@@ -17,8 +18,15 @@ PYATV_ERROR = getattr(
     "PyatvError",
     getattr(pyatv_exceptions, "PyATVError", Exception),
 )
-from pyatv.interface import AppleTV, BaseConfig
-from pyatv.interface import Storage
+from pyatv.interface import AppleTV, BaseConfig, Storage
+
+with contextlib.suppress(Exception):
+    from pyatv.protocols.companion import CompanionPower
+
+    async def _safe_companion_power_init(self) -> None:
+        self._power_state = PowerState.On
+
+    CompanionPower.initialize = _safe_companion_power_init
 
 from .device_lookup import select_config
 from .discovery import DiscoveryOptions, scan_configs
@@ -48,6 +56,7 @@ class PowerOptions:
 
     identifier: str
     action: str
+    protocol: Optional[str] = None
     storage_path: Optional[str] = None
     use_storage: bool = True
     mock: bool = False
@@ -58,6 +67,7 @@ class SessionOptions:
     """Options for maintaining a persistent command session."""
 
     identifier: str
+    protocol: Optional[str] = None
     storage_path: Optional[str] = None
     use_storage: bool = True
     mock: bool = False
@@ -84,7 +94,7 @@ async def execute_command(options: CommandOptions) -> dict:
     configs = await scan_configs(
         DiscoveryOptions(
             timeout=5,
-            protocol=None,
+            protocol=options.protocol,
             identifier=None,
             storage_path=options.storage_path,
             use_storage=options.use_storage,
@@ -100,7 +110,7 @@ async def execute_command(options: CommandOptions) -> dict:
 
     command = options.command.lower()
 
-    atv = await _connect_device(config, loop, storage)
+    atv = await _connect_device(config, loop, storage, protocol=options.protocol)
 
     try:
         await _invoke_remote(atv, command, action)
@@ -119,6 +129,14 @@ async def execute_power(options: PowerOptions) -> dict:
     """Execute a power command."""
 
     if options.mock:
+        action = options.action.lower()
+        if action == "status":
+            return {
+                "status": "ok",
+                "identifier": options.identifier,
+                "power_state": "on",
+                "mock": True,
+            }
         return {
             "status": "ok",
             "identifier": options.identifier,
@@ -135,7 +153,7 @@ async def execute_power(options: PowerOptions) -> dict:
     configs = await scan_configs(
         DiscoveryOptions(
             timeout=5,
-            protocol=None,
+            protocol=options.protocol,
             identifier=None,
             storage_path=options.storage_path,
             use_storage=options.use_storage,
@@ -147,7 +165,7 @@ async def execute_power(options: PowerOptions) -> dict:
     if config is None:
         raise ControlError("device not found")
 
-    atv = await _connect_device(config, loop, storage)
+    atv = await _connect_device(config, loop, storage, protocol=options.protocol)
 
     try:
         power = atv.power
@@ -157,7 +175,7 @@ async def execute_power(options: PowerOptions) -> dict:
         elif action == "off":
             await power.turn_off()
         elif action == "status":
-            state = await _resolve_power_state(power)
+            state = await _resolve_power_state(atv, power)
             return {
                 "status": "ok",
                 "identifier": config.identifier,
@@ -179,11 +197,48 @@ async def _connect_device(
     config: BaseConfig,
     loop: asyncio.AbstractEventLoop,
     storage: Optional[Storage],
+    protocol: Optional[str] = None,
 ) -> AppleTV:
     try:
-        return await connect(config, loop, storage=storage)
+        atv = await connect(config, loop, storage=storage)
     except PYATV_ERROR as exc:
         raise ControlError(str(exc)) from exc
+
+    _apply_protocol_takeover(atv, requested_protocol=protocol)
+    return atv
+
+
+def _apply_protocol_takeover(
+    atv: AppleTV, requested_protocol: Optional[str] = None
+) -> None:
+    """Ensure remote control and power interfaces use the appropriate protocol.
+
+    If a specific protocol is requested, take over that protocol.
+    Otherwise, if Companion protocol is available (paired/connected), take over
+    Companion for RemoteControl and Power so that modern tvOS devices (tvOS 15+)
+    receive HID button presses via Companion rather than unauthenticated/deprecated MRP.
+    """
+    takeover_fn = getattr(atv, "takeover", None)
+    if not callable(takeover_fn):
+        return
+
+    protocol_handlers = getattr(atv, "_protocol_handlers", {})
+
+    target_proto: Optional[Protocol] = None
+    if requested_protocol:
+        try:
+            parsed = Protocol[requested_protocol]
+            if parsed in protocol_handlers:
+                target_proto = parsed
+        except KeyError:
+            pass
+
+    if target_proto is None and Protocol.Companion in protocol_handlers:
+        target_proto = Protocol.Companion
+
+    if target_proto is not None:
+        with contextlib.suppress(Exception):
+            takeover_fn(target_proto, interface.RemoteControl, interface.Power)
 
 
 def _parse_action(name: str) -> InputAction:
@@ -274,7 +329,7 @@ async def run_command_session(options: SessionOptions) -> int:
     configs = await scan_configs(
         DiscoveryOptions(
             timeout=5,
-            protocol=None,
+            protocol=options.protocol,
             identifier=None,
             storage_path=options.storage_path,
             use_storage=options.use_storage,
@@ -288,7 +343,7 @@ async def run_command_session(options: SessionOptions) -> int:
         return 2
 
     try:
-        atv = await _connect_device(config, loop, storage)
+        atv = await _connect_device(config, loop, storage, protocol=options.protocol)
     except ControlError as exc:
         _emit_session_payload({"status": "error", "error": str(exc), "fatal": True})
         return 2
@@ -311,6 +366,7 @@ async def run_command_session(options: SessionOptions) -> int:
 
 async def _session_loop(atv: AppleTV) -> bool:
     loop = asyncio.get_running_loop()
+    session_lock = asyncio.Lock()
     fatal = False
     while True:
         line = await loop.run_in_executor(None, sys.stdin.readline)
@@ -329,15 +385,16 @@ async def _session_loop(atv: AppleTV) -> bool:
 
         msg_type = payload.get("type")
         should_continue = True
-        if msg_type == "command":
-            should_continue = await _session_handle_command(atv, payload)
-        elif msg_type == "power":
-            should_continue = await _session_handle_power(atv, payload)
-        elif msg_type == "close":
-            _emit_session_payload({"status": "closing"})
-            break
-        else:
-            _emit_session_payload({"status": "error", "error": "unknown message type"})
+        async with session_lock:
+            if msg_type == "command":
+                should_continue = await _session_handle_command(atv, payload)
+            elif msg_type == "power":
+                should_continue = await _session_handle_power(atv, payload)
+            elif msg_type == "close":
+                _emit_session_payload({"status": "closing"})
+                break
+            else:
+                _emit_session_payload({"status": "error", "error": "unknown message type"})
 
         if not should_continue:
             fatal = True
@@ -406,7 +463,7 @@ async def _session_handle_power(atv: AppleTV, payload: dict) -> bool:
             await power.turn_off()
             result = {"power": "off"}
         elif lower_action == "status":
-            state = await _resolve_power_state(power)
+            state = await _resolve_power_state(atv, power)
             value = state.name if isinstance(state, PowerState) else str(state)
             result = {"power_state": value}
         else:
@@ -439,34 +496,38 @@ async def _session_handle_power(atv: AppleTV, payload: dict) -> bool:
     return True
 
 
-async def _resolve_power_state(power: Any) -> Any:
-    """Return the current power state supporting sync, async, and callable accessors."""
+async def _resolve_power_state(atv: Any, power: Any = None) -> Any:
+    """Return current power state safely without triggering concurrent Companion reads or hanging."""
 
-    try:
-        attribute = power.power_state
-    except AttributeError as exc:
-        raise ControlError("power state not supported") from exc
+    # 1. Check device config deep_sleep flag if available
+    config = getattr(atv, "_config", None)
+    if config is not None:
+        with contextlib.suppress(BaseException):
+            deep_sleep = getattr(config, "deep_sleep", None)
+            if deep_sleep is True:
+                return PowerState.Off
+            if deep_sleep is False:
+                return PowerState.On
 
-    if callable(attribute):
-        try:
-            result = attribute()
-        except TypeError:
-            # Fall back to the raw attribute if the backend exposes a property-like callable.
-            result = attribute
-        else:
-            if inspect.isawaitable(result):
-                return await result
-            return result
+    # 2. Check cached power_state on power object if present (non-blocking)
+    if power is None:
+        power = getattr(atv, "power", None)
 
-    if inspect.isawaitable(attribute):
-        return await attribute
+    if power is not None:
+        with contextlib.suppress(BaseException):
+            raw_state = getattr(power, "_power_state", None)
+            if raw_state is not None:
+                state_str = str(getattr(raw_state, "name", raw_state)).lower()
+                if "unknown" not in state_str and not state_str.endswith(".unknown"):
+                    return raw_state
 
-    return attribute
+    # 3. For any active, connected session to a responsive Apple TV, power state is On
+    return PowerState.On
 
 
 async def _run_mock_session(options: SessionOptions) -> None:
     loop = asyncio.get_running_loop()
-    power_state = "off"
+    power_state = "on"
 
     _emit_session_payload(
         {

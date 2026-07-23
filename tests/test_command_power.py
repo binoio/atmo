@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 from typing import Optional
 
 from pyatv import exceptions as pyatv_exceptions
-from pyatv.const import DeviceState, InputAction, PowerState
+from pyatv.const import DeviceState, InputAction, PowerState, Protocol
 
 from pybridge import cli
 
@@ -353,6 +353,73 @@ class CommandPowerTests(unittest.TestCase):
         self.assertGreaterEqual(len(responses), 2)
         self.assertEqual(responses[1]["status"], "ok")
         self.assertEqual(self.apple_tv.remote_control.calls[-1][0], "pause")
+
+    def test_apply_protocol_takeover_prioritizes_companion(self) -> None:
+        class MockAppleTV:
+            def __init__(self) -> None:
+                self._protocol_handlers = {
+                    Protocol.MRP: "mrp_handler",
+                    Protocol.Companion: "companion_handler",
+                }
+                self.takeover_calls = []
+
+            def takeover(self, protocol, *interfaces) -> None:
+                self.takeover_calls.append((protocol, interfaces))
+
+        mock_atv = MockAppleTV()
+        from pybridge.control import _apply_protocol_takeover
+        from pyatv import interface
+
+        _apply_protocol_takeover(mock_atv)
+        self.assertEqual(len(mock_atv.takeover_calls), 1)
+        self.assertEqual(mock_atv.takeover_calls[0][0], Protocol.Companion)
+        self.assertIn(interface.RemoteControl, mock_atv.takeover_calls[0][1])
+
+    def test_apply_protocol_takeover_uses_requested_protocol(self) -> None:
+        class MockAppleTV:
+            def __init__(self) -> None:
+                self._protocol_handlers = {
+                    Protocol.MRP: "mrp_handler",
+                    Protocol.Companion: "companion_handler",
+                    Protocol.AirPlay: "airplay_handler",
+                }
+                self.takeover_calls = []
+
+            def takeover(self, protocol, *interfaces) -> None:
+                self.takeover_calls.append((protocol, interfaces))
+
+        mock_atv = MockAppleTV()
+        from pybridge.control import _apply_protocol_takeover
+        from pyatv import interface
+
+        _apply_protocol_takeover(mock_atv, requested_protocol="AirPlay")
+        self.assertEqual(len(mock_atv.takeover_calls), 1)
+        self.assertEqual(mock_atv.takeover_calls[0][0], Protocol.AirPlay)
+        self.assertIn(interface.RemoteControl, mock_atv.takeover_calls[0][1])
+
+    def test_command_with_protocol_option(self) -> None:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(self.scan_patch)
+            stack.enter_context(self.storage_patch)
+            stack.enter_context(self.connect_patch)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main(
+                    [
+                        "command",
+                        "--identifier",
+                        "Living Room",
+                        "--command",
+                        "up",
+                        "--protocol",
+                        "Companion",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "ok")
 
 
 if __name__ == "__main__":  # pragma: no cover
