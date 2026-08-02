@@ -266,13 +266,13 @@ private struct PairingKey: Hashable {
 }
 
 private final class InteractivePairSession: @unchecked Sendable {
-    let process: Process
+    let process: InheritingProcess
     let stdinPipe: Pipe
     let stdoutPipe: Pipe
     let stderrPipe: Pipe
     var stdoutBuffer = Data()
 
-    init(process: Process, stdinPipe: Pipe, stdoutPipe: Pipe, stderrPipe: Pipe) {
+    init(process: InheritingProcess, stdinPipe: Pipe, stdoutPipe: Pipe, stderrPipe: Pipe) {
         self.process = process
         self.stdinPipe = stdinPipe
         self.stdoutPipe = stdoutPipe
@@ -304,14 +304,14 @@ private struct CommandSessionKey: Hashable {
 }
 
 private final class CommandSession: @unchecked Sendable {
-    let process: Process
+    let process: InheritingProcess
     let stdinPipe: Pipe
     let stdoutPipe: Pipe
     let stderrPipe: Pipe
     var stdoutBuffer = Data()
     var waitingContinuation: CheckedContinuation<Data, Error>?
 
-    init(process: Process, stdinPipe: Pipe, stdoutPipe: Pipe, stderrPipe: Pipe) {
+    init(process: InheritingProcess, stdinPipe: Pipe, stdoutPipe: Pipe, stderrPipe: Pipe) {
         self.process = process
         self.stdinPipe = stdinPipe
         self.stdoutPipe = stdoutPipe
@@ -630,7 +630,7 @@ actor BridgeService: BridgeServiceProtocol {
         var arguments = bridgeArguments(mock: key.mock, command: .session)
         arguments += ["--identifier", identifier]
 
-        let process = Process()
+        let process = InheritingProcess()
         process.executableURL = pythonExecutable
         process.arguments = arguments
 
@@ -882,7 +882,7 @@ actor BridgeService: BridgeServiceProtocol {
     arguments.append("--interactive")
     arguments += ["--identifier", identifier, "--protocol", protocolName]
 
-        let process = Process()
+        let process = InheritingProcess()
         process.executableURL = pythonExecutable
         process.arguments = arguments
 
@@ -908,7 +908,7 @@ actor BridgeService: BridgeServiceProtocol {
         return InteractivePairSession(process: process, stdinPipe: stdinPipe, stdoutPipe: stdoutPipe, stderrPipe: stderrPipe)
     }
 
-    private func sessionMonitorOutput(session process: Process, pipe: Pipe) {
+    private func sessionMonitorOutput(session process: InheritingProcess, pipe: Pipe) {
         pipe.fileHandleForReading.readabilityHandler = { _ in }
     }
     private func handleInteractiveTermination(for key: PairingKey) async {
@@ -1006,7 +1006,7 @@ actor BridgeService: BridgeServiceProtocol {
 
     private func runBridge(arguments: [String]) async throws -> Data {
         return try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
+            let process = InheritingProcess()
             process.executableURL = pythonExecutable
             process.arguments = arguments
             let baseEnvironment = ProcessInfo.processInfo.environment
