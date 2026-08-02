@@ -1046,14 +1046,14 @@ final class BridgeViewModelTests: XCTestCase {
         let mockService = MockBridgeService()
         let (viewModel, _) = await makeViewModel(service: mockService)
 
-        let result: (url: URL?, message: String?) = await MainActor.run {
+        let result: (url: URL?, message: String?, expectedURL: URL) = await MainActor.run {
             let box = OpenedURLBox()
             viewModel.openURLHandler = { box.value = $0 }
             viewModel.performLocalNetworkPermissionReset()
-            return (box.value, viewModel.statusMessage)
+            return (box.value, viewModel.statusMessage, BridgeViewModel.localNetworkSettingsURL)
         }
 
-        XCTAssertEqual(result.url, BridgeViewModel.localNetworkSettingsURL)
+        XCTAssertEqual(result.url, result.expectedURL)
         XCTAssertEqual(
             result.message,
             "Toggle Atmo under Local Network, then quit and reopen Atmo."
