@@ -104,6 +104,7 @@ final class BridgeViewModel: ObservableObject {
     }
     @Published var launchesAtLogin: Bool = BridgeViewModel.isLaunchAtLoginEnabled()
     @Published var isClearingCredentials: Bool = false
+    @Published var localNetworkPermission: LocalNetworkPermissionState = .unknown
     @Published var useMockBridge: Bool = false
     @Published var lastKnownPowerState: PowerStateStatus?
     @Published var rememberDiscoveredDevices: Bool = true {
@@ -253,9 +254,27 @@ final class BridgeViewModel: ObservableObject {
                     }
                 }
             }
+            if filteredDevices.isEmpty && !shouldUseMock {
+                await checkLocalNetworkPermission()
+                if localNetworkPermission == .denied {
+                    statusMessage = "No devices found — Atmo's Local Network access appears to be denied. Use Settings › Reset Local Network Permission."
+                }
+            }
+        } catch is BridgeTimeoutError {
+            statusMessage = "Scan timed out — check that Atmo is allowed under System Settings › Privacy & Security › Local Network."
+            await checkLocalNetworkPermission()
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    /// Injectable so tests can control the inferred permission state.
+    var permissionChecker: @Sendable () async -> LocalNetworkPermissionState = {
+        await LocalNetworkAuthorization.check()
+    }
+
+    func checkLocalNetworkPermission() async {
+        localNetworkPermission = await permissionChecker()
     }
 
     func sendCommand(_ command: String, action: String = "SingleTap", mock: Bool? = nil) {
@@ -575,31 +594,48 @@ final class BridgeViewModel: ObservableObject {
     /// Injectable so tests can assert the URL without opening System Settings.
     var openURLHandler: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
-    /// Presents a confirmation, then (under App Sandbox we can't call `tccutil`
-    /// or relaunch ourselves) deep-links to System Settings so the user can reset
-    /// Atmo's Local Network permission and relaunch.
+    /// Injectable so tests can assert the quit path without terminating the runner.
+    var quitHandler: () -> Void = { NSApplication.shared.terminate(nil) }
+
+    /// Presents the reset options. The sandbox blocks exec of `tccutil` and
+    /// self-relaunch, so the app deep-links to System Settings and can quit
+    /// itself so the toggle takes effect on next launch.
     func resetLocalNetworkPermission() {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "Reset Local Network Permission"
         alert.informativeText = """
         macOS controls Local Network access from System Settings. Atmo will open \
-        System Settings ▸ Privacy & Security ▸ Local Network. Turn Atmo off and back \
-        on there, then quit and reopen Atmo for the change to take effect.
+        System Settings ▸ Privacy & Security ▸ Local Network — turn Atmo off and \
+        back on there, then reopen Atmo. Choose "Open Settings and Quit" to have \
+        Atmo quit for you once Settings is open.
+
+        For a full reset (so the permission prompt appears again), run this in \
+        Terminal instead, then relaunch Atmo:
+        tccutil reset LocalNetwork io.bino.atmo
         """
+        alert.addButton(withTitle: "Open Settings and Quit")
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Cancel")
 
         NSApplication.shared.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        performLocalNetworkPermissionReset()
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            performLocalNetworkPermissionReset(quitAfterOpening: true)
+        case .alertSecondButtonReturn:
+            performLocalNetworkPermissionReset(quitAfterOpening: false)
+        default:
+            break
+        }
     }
 
     /// The side-effecting part, split out so it is testable without a modal.
-    func performLocalNetworkPermissionReset() {
+    func performLocalNetworkPermissionReset(quitAfterOpening: Bool = false) {
         openURLHandler(Self.localNetworkSettingsURL)
         statusMessage = "Toggle Atmo under Local Network, then quit and reopen Atmo."
+        if quitAfterOpening {
+            quitHandler()
+        }
     }
 
     private func cancelPendingPairing(for device: BridgeDevice?, showMessage: Bool) {

@@ -24,7 +24,7 @@ import Foundation
 /// `@unchecked Sendable`: all mutable state is guarded by `stateLock`; the
 /// configuration properties are only mutated before `run()` on the calling
 /// thread, matching how `Foundation.Process` is used here.
-final class InheritingProcess: @unchecked Sendable {
+final class InheritingProcess: BridgeProcess, @unchecked Sendable {
     struct LaunchError: Error, LocalizedError {
         let code: Int32
         var errorDescription: String? {
@@ -38,7 +38,7 @@ final class InheritingProcess: @unchecked Sendable {
     var standardInput: Pipe?
     var standardOutput: Pipe?
     var standardError: Pipe?
-    var terminationHandler: ((InheritingProcess) -> Void)?
+    var terminationHandler: ((any BridgeProcess) -> Void)?
 
     private let stateLock = NSLock()
     private let exitGroup = DispatchGroup()
@@ -140,6 +140,16 @@ final class InheritingProcess: @unchecked Sendable {
         stateLock.unlock()
         if running && pid > 0 {
             kill(pid, SIGTERM)
+        }
+    }
+
+    func kill9() {
+        stateLock.lock()
+        let pid = _processIdentifier
+        let running = _isRunning
+        stateLock.unlock()
+        if running && pid > 0 {
+            kill(pid, SIGKILL)
         }
     }
 

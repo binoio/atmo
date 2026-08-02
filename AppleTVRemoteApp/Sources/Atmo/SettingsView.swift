@@ -76,6 +76,17 @@ struct SettingsView: View {
             .buttonStyle(.bordered)
             .padding(.vertical, 4)
 
+            HStack(spacing: 6) {
+                Text("Local Network access:")
+                Text(localNetworkStatusText)
+                    .foregroundStyle(.secondary)
+            }
+            .font(.footnote)
+            .padding(.vertical, 2)
+            .task {
+                await viewModel.checkLocalNetworkPermission()
+            }
+
             if let status = viewModel.statusMessage, !status.isEmpty {
                 Text(status)
                     .font(.footnote)
@@ -124,6 +135,19 @@ struct SettingsView: View {
         .padding(24)
         .frame(minWidth: 360, maxWidth: 480)
         .frame(minHeight: 260)
+    }
+
+    private var localNetworkStatusText: String {
+        switch viewModel.localNetworkPermission {
+        case .unknown:
+            return "Checking…"
+        case .granted:
+            return "Granted"
+        case .denied:
+            return "Denied — use the reset button above"
+        case .indeterminate:
+            return "Unable to determine (no Apple TVs found on the network)"
+        }
     }
 }
 

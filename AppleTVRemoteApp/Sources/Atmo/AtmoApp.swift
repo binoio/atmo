@@ -138,7 +138,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWindow.allowsAutomaticWindowTabbing = false
         // Trigger the Local Network permission prompt from the app process (which
         // carries the usage description) rather than waiting for the first scan.
-        LocalNetworkAuthorization.prewarm()
+        // The result is logged; the view model runs its own check for the UI.
+        Task.detached {
+            _ = await LocalNetworkAuthorization.check()
+        }
     }
 
     func registerSupplementaryWindowController(_ controller: NSWindowController) {

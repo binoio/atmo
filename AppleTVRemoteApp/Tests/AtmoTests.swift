@@ -1,9 +1,11 @@
 import XCTest
 import AppKit
+import Network
 @testable import Atmo
 
 actor MockBridgeService: BridgeServiceProtocol {
     private var scanResult: [BridgeDevice] = []
+    private var scanError: Error?
     private var commandCalls: [(String, String, String, Bool)] = []
     private var powerCalls: [(String, String, Bool)] = []
     private var pairResponses: [PairResponse] = []
@@ -16,6 +18,10 @@ actor MockBridgeService: BridgeServiceProtocol {
 
     func setScanResult(_ result: [BridgeDevice]) {
         scanResult = result
+    }
+
+    func setScanError(_ error: Error?) {
+        scanError = error
     }
 
     func setPairResponses(_ responses: [PairResponse]) {
@@ -60,7 +66,10 @@ actor MockBridgeService: BridgeServiceProtocol {
     }
 
     func scan(mock: Bool) async throws -> [BridgeDevice] {
-        scanResult
+        if let scanError {
+            throw scanError
+        }
+        return scanResult
     }
 
     func pair(identifier: String, protocolName: String, pin: String?, mock: Bool) async throws -> PairResponse {
@@ -217,6 +226,8 @@ final class BridgeViewModelTests: XCTestCase {
             BridgeViewModel.resetDeviceCache()
         }
         let viewModel = await MainActor.run { BridgeViewModel(service: service) }
+        // Stub out the live NWBrowser probe so unit tests stay fast and offline.
+        await MainActor.run { viewModel.permissionChecker = { .unknown } }
         return (viewModel, cache)
     }
 
@@ -1058,6 +1069,198 @@ final class BridgeViewModelTests: XCTestCase {
             result.message,
             "Toggle Atmo under Local Network, then quit and reopen Atmo."
         )
+    }
+
+    func testResetLocalNetworkPermissionQuitPath() async {
+        let mockService = MockBridgeService()
+        let (viewModel, _) = await makeViewModel(service: mockService)
+
+        let result: (url: URL?, quitCalled: Bool) = await MainActor.run {
+            let box = OpenedURLBox()
+            var quitCalled = false
+            viewModel.openURLHandler = { box.value = $0 }
+            viewModel.quitHandler = { quitCalled = true }
+            viewModel.performLocalNetworkPermissionReset(quitAfterOpening: true)
+            return (box.value, quitCalled)
+        }
+
+        XCTAssertNotNil(result.url, "settings pane should open before quitting")
+        XCTAssertTrue(result.quitCalled)
+    }
+
+    func testRefreshDevicesSurfacesTimeout() async {
+        let mockService = MockBridgeService()
+        await mockService.setScanError(BridgeTimeoutError())
+        let (viewModel, _) = await makeViewModel(service: mockService)
+        await MainActor.run { viewModel.permissionChecker = { .indeterminate } }
+
+        await viewModel.refreshDevices()
+
+        await MainActor.run {
+            XCTAssertFalse(viewModel.isLoading)
+            XCTAssertTrue(viewModel.statusMessage?.contains("timed out") ?? false)
+            XCTAssertEqual(viewModel.localNetworkPermission, .indeterminate)
+        }
+    }
+
+    func testEmptyScanWithDeniedPermissionSetsActionableStatus() async {
+        let mockService = MockBridgeService()
+        let (viewModel, _) = await makeViewModel(service: mockService)
+        await MainActor.run { viewModel.permissionChecker = { .denied } }
+
+        await viewModel.refreshDevices()
+
+        await MainActor.run {
+            XCTAssertEqual(viewModel.localNetworkPermission, .denied)
+            XCTAssertTrue(viewModel.statusMessage?.localizedCaseInsensitiveContains("denied") ?? false)
+        }
+    }
+}
+
+final class BridgeRunTests: XCTestCase {
+    private func makeService() -> BridgeService {
+        BridgeService(pythonExecutable: URL(fileURLWithPath: "/bin/sh"))
+    }
+
+    func testWatchdogKillsHungChild() async throws {
+        let service = makeService()
+        let marker = "atmo-watchdog-test-\(UUID().uuidString)"
+        let start = Date()
+
+        do {
+            _ = try await service.runBridge(arguments: ["-c", "sleep 60; echo \(marker)"], timeout: 1)
+            XCTFail("expected BridgeTimeoutError")
+        } catch is BridgeTimeoutError {
+            // expected
+        }
+
+        XCTAssertLessThan(Date().timeIntervalSince(start), 10, "watchdog should fire near the 1s timeout")
+
+        // SIGTERM at timeout, SIGKILL 2s later; allow slack, then the child must be gone.
+        try await Task.sleep(nanoseconds: 3_500_000_000)
+        let pgrep = Process()
+        pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        pgrep.arguments = ["-f", marker]
+        pgrep.standardOutput = Pipe()
+        try pgrep.run()
+        pgrep.waitUntilExit()
+        XCTAssertNotEqual(pgrep.terminationStatus, 0, "hung child should have been killed by the watchdog")
+    }
+
+    func testLargeStderrDoesNotDeadlock() async throws {
+        let service = makeService()
+        // ~200 KB of stderr — several times the pipe buffer. Without concurrent
+        // draining the child blocks on write() and never exits.
+        let script = "dd if=/dev/zero bs=1024 count=200 2>/dev/null | tr '\\0' 'x' >&2; echo ok"
+        let data = try await service.runBridge(arguments: ["-c", script], timeout: 15)
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(output, "ok")
+    }
+
+    func testNonzeroExitSurfacesStderr() async throws {
+        let service = makeService()
+        do {
+            _ = try await service.runBridge(arguments: ["-c", "echo boom 1>&2; exit 2"], timeout: 15)
+            XCTFail("expected BridgeError")
+        } catch let error as BridgeError {
+            XCTAssertEqual(error.message, "boom")
+        }
+    }
+
+    func testScanArgumentsIncludeTimeoutAfterSubcommand() async {
+        let service = makeService()
+        let arguments = await service.scanArguments(mock: false)
+        guard let scanIndex = arguments.firstIndex(of: "scan") else {
+            return XCTFail("missing scan subcommand in \(arguments)")
+        }
+        XCTAssertEqual(Array(arguments[scanIndex...]), ["scan", "--timeout", "5"],
+                       "--timeout must follow the scan token (it is a scan-subparser option)")
+    }
+}
+
+final class LocalNetworkAuthorizationTests: XCTestCase {
+    func testClassifyGrantedOnResults() {
+        XCTAssertEqual(
+            LocalNetworkAuthorization.classify(browserState: .ready, hasResults: true),
+            .granted
+        )
+    }
+
+    func testClassifyDeniedOnPolicyDenied() {
+        let error = NWError.dns(DNSServiceErrorType(LocalNetworkAuthorization.dnsServicePolicyDenied))
+        XCTAssertEqual(
+            LocalNetworkAuthorization.classify(browserState: .waiting(error), hasResults: false),
+            .denied
+        )
+        XCTAssertEqual(
+            LocalNetworkAuthorization.classify(browserState: .failed(error), hasResults: false),
+            .denied
+        )
+    }
+
+    func testClassifyDeniedOnNoAuth() {
+        let error = NWError.dns(DNSServiceErrorType(LocalNetworkAuthorization.dnsServiceNoAuth))
+        XCTAssertEqual(
+            LocalNetworkAuthorization.classify(browserState: .waiting(error), hasResults: false),
+            .denied
+        )
+    }
+
+    func testClassifyDeniedOnEPERM() {
+        XCTAssertEqual(
+            LocalNetworkAuthorization.classify(browserState: .waiting(.posix(.EPERM)), hasResults: false),
+            .denied
+        )
+    }
+
+    func testClassifyKeepsWaitingOnUndecisiveStates() {
+        XCTAssertNil(LocalNetworkAuthorization.classify(browserState: .ready, hasResults: false))
+        XCTAssertNil(LocalNetworkAuthorization.classify(browserState: .setup, hasResults: false))
+        XCTAssertNil(
+            LocalNetworkAuthorization.classify(browserState: .waiting(.posix(.ENETDOWN)), hasResults: false)
+        )
+    }
+}
+
+final class BridgeSpawnStrategyTests: XCTestCase {
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: "ATMO_SPAWN_STRATEGY")
+        super.tearDown()
+    }
+
+    func testDefaultStrategyIsInheriting() {
+        UserDefaults.standard.removeObject(forKey: "ATMO_SPAWN_STRATEGY")
+        XCTAssertTrue(BridgeSpawnStrategy.current.makeProcess() is InheritingProcess)
+    }
+
+    func testDisclaimingStrategyIsHonored() {
+        UserDefaults.standard.set("disclaiming", forKey: "ATMO_SPAWN_STRATEGY")
+        XCTAssertTrue(BridgeSpawnStrategy.current.makeProcess() is DisclaimingProcess)
+    }
+
+    func testUnknownStrategyFallsBackToInheriting() {
+        UserDefaults.standard.set("bogus", forKey: "ATMO_SPAWN_STRATEGY")
+        XCTAssertTrue(BridgeSpawnStrategy.current.makeProcess() is InheritingProcess)
+    }
+
+    func testDisclaimingProcessRunsAndCapturesOutput() throws {
+        let process = DisclaimingProcess()
+        process.executableURL = URL(fileURLWithPath: "/bin/echo")
+        process.arguments = ["hello-disclaiming"]
+        let stdout = Pipe()
+        process.standardOutput = stdout
+
+        let terminated = expectation(description: "terminationHandler fires")
+        process.terminationHandler = { _ in terminated.fulfill() }
+
+        try process.run()
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        wait(for: [terminated], timeout: 5)
+
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(output, "hello-disclaiming")
+        XCTAssertEqual(process.terminationStatus, 0)
     }
 }
 
