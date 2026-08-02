@@ -27,3 +27,4 @@ pip-wheel-metadata/
 .DS_Store
 *.swp
 *.swo
+.ship-it.record
