@@ -50,11 +50,13 @@ echo "Step 2/4: Signing dynamic libraries (.dylib)..."
 sign_files "*.dylib" ".dylib"
 
 # ── Step 3: All remaining Mach-O executables ──────────────────────────
-# These are the binaries the app spawns (python3, etc.). They are signed
-# with the app's own entitlements (app-sandbox + network), reproducing the
-# v1.0.0 `codesign --deep --entitlements` effect explicitly: the child runs
-# in its own sandbox with network access rather than inheriting.
-echo "Step 3/4: Signing Mach-O executables (with app entitlements)..."
+# These are the binaries the app spawns (python3, etc.). They are signed with
+# hardened runtime but NO entitlements: an unentitled child exec'd by a
+# sandboxed app silently inherits the parent's sandbox (the v1.0.0 behavior).
+# Signing them with app-sandbox (with or without inherit variations) makes
+# secinit try to bootstrap a standalone container for a bare interpreter,
+# which kills the child instantly with exit status 5 and no stderr.
+echo "Step 3/4: Signing Mach-O executables (hardened runtime, no entitlements)..."
 MACHO_COUNT=0
 
 # Find all regular files under the Python directories and sign any Mach-O binary.
@@ -64,7 +66,7 @@ while IFS= read -r -d '' file; do
         continue
     fi
     if file "$file" | grep -q "Mach-O"; then
-        codesign "${CODESIGN_FLAGS[@]}" --entitlements "$ENTITLEMENTS" "$file"
+        codesign "${CODESIGN_FLAGS[@]}" "$file"
         ((MACHO_COUNT++))
     fi
 done < <(find "$APP_BUNDLE" -type f \

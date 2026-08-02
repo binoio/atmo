@@ -4,17 +4,19 @@ import Foundation
 /// implementation, so the spawn strategy can be swapped at runtime.
 ///
 /// Two implementations exist:
-/// - `InheritingProcess` (default): posix_spawn without disclaiming TCC
-///   responsibility — the python child's local-network traffic is attributed to
-///   Atmo, which carries `NSLocalNetworkUsageDescription`.
-/// - `DisclaimingProcess`: Foundation `Process`, which disclaims responsibility
-///   so the child becomes its own TCC identity (the v1.0.0 behavior, where the
-///   embedded python — signed with the app's entitlements — prompts under its
-///   own identity).
+/// - `DisclaimingProcess` (default): Foundation `Process`, which disclaims TCC
+///   responsibility so the child becomes its own identity — the v1.0.0
+///   configuration. Verified on macOS 26: the sandboxed child's mDNS multicast
+///   gets responses and discovery works.
+/// - `InheritingProcess`: posix_spawn without disclaiming, so the child's
+///   network traffic is attributed to Atmo. In principle the cleaner
+///   attribution, but on macOS 26 mDNSResponder fails to resolve trust info
+///   for the hybrid identity (bare interpreter inside an app's TCC
+///   responsibility) and the child's multicast is silently unanswered.
 ///
-/// Select with `defaults write io.bino.atmo ATMO_SPAWN_STRATEGY disclaiming`
-/// (anything else, or unset, uses the inheriting default). This is an on-device
-/// A/B lever for TCC attribution debugging that requires no rebuild.
+/// Select with `defaults write io.bino.atmo ATMO_SPAWN_STRATEGY inheriting`
+/// (anything else, or unset, uses the disclaiming default). This is an
+/// on-device A/B lever for TCC attribution debugging that requires no rebuild.
 protocol BridgeProcess: AnyObject, Sendable {
     var executableURL: URL? { get set }
     var arguments: [String]? { get set }
@@ -40,7 +42,7 @@ enum BridgeSpawnStrategy: String {
     static var current: BridgeSpawnStrategy {
         BridgeSpawnStrategy(
             rawValue: UserDefaults.standard.string(forKey: "ATMO_SPAWN_STRATEGY") ?? ""
-        ) ?? .inheriting
+        ) ?? .disclaiming
     }
 
     func makeProcess() -> any BridgeProcess {

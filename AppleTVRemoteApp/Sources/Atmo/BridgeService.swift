@@ -518,6 +518,9 @@ actor BridgeService: BridgeServiceProtocol {
 
         var overrides: [String: String] = [:]
         overrides["PYTHONUNBUFFERED"] = "1"
+        // The bundle is read-only under App Sandbox; without this python tries
+        // (and is denied) to write __pycache__ next to every imported module.
+        overrides["PYTHONDONTWRITEBYTECODE"] = "1"
 
         // Point PYTHONHOME at the embedded framework so standalone Python
         // builds don't emit "Could not find platform dependent libraries" on stderr.
@@ -1148,7 +1151,7 @@ actor BridgeService: BridgeServiceProtocol {
             completionGroup.notify(queue: .global()) {
                 let status = process.terminationStatus
                 if status == 0 {
-                    logger.info("bridge exited status=0 stdout=\(stdoutBuffer.data.count, privacy: .public) bytes")
+                    logger.notice("bridge exited status=0 stdout=\(stdoutBuffer.data.count, privacy: .public) bytes")
                     guardedContinuation.resume(returning: stdoutBuffer.data)
                 } else {
                     let message = String(data: stderrBuffer.data, encoding: .utf8)?
@@ -1177,7 +1180,7 @@ actor BridgeService: BridgeServiceProtocol {
     /// diagnose with `log show --predicate 'subsystem == "io.bino.atmo"'`.
     /// Must not include device identifiers or credentials.
     private func bridgeLog(_ message: String) {
-        logger.info("\(message, privacy: .public)")
+        logger.notice("\(message, privacy: .public)")
     }
 
 #if DEBUG

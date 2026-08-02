@@ -1228,19 +1228,19 @@ final class BridgeSpawnStrategyTests: XCTestCase {
         super.tearDown()
     }
 
-    func testDefaultStrategyIsInheriting() {
+    func testDefaultStrategyIsDisclaiming() {
         UserDefaults.standard.removeObject(forKey: "ATMO_SPAWN_STRATEGY")
-        XCTAssertTrue(BridgeSpawnStrategy.current.makeProcess() is InheritingProcess)
-    }
-
-    func testDisclaimingStrategyIsHonored() {
-        UserDefaults.standard.set("disclaiming", forKey: "ATMO_SPAWN_STRATEGY")
         XCTAssertTrue(BridgeSpawnStrategy.current.makeProcess() is DisclaimingProcess)
     }
 
-    func testUnknownStrategyFallsBackToInheriting() {
-        UserDefaults.standard.set("bogus", forKey: "ATMO_SPAWN_STRATEGY")
+    func testInheritingStrategyIsHonored() {
+        UserDefaults.standard.set("inheriting", forKey: "ATMO_SPAWN_STRATEGY")
         XCTAssertTrue(BridgeSpawnStrategy.current.makeProcess() is InheritingProcess)
+    }
+
+    func testUnknownStrategyFallsBackToDisclaiming() {
+        UserDefaults.standard.set("bogus", forKey: "ATMO_SPAWN_STRATEGY")
+        XCTAssertTrue(BridgeSpawnStrategy.current.makeProcess() is DisclaimingProcess)
     }
 
     func testDisclaimingProcessRunsAndCapturesOutput() throws {

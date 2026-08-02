@@ -85,7 +85,7 @@ enum LocalNetworkAuthorization {
 
             let finish: @Sendable (LocalNetworkPermissionState) -> Void = { state in
                 guard verdict.settle(state) else { return }
-                logger.info("local network permission verdict: \(String(describing: state), privacy: .public)")
+                logger.notice("local network permission verdict: \(String(describing: state), privacy: .public)")
                 for browser in browsers {
                     browser.cancel()
                 }
@@ -95,7 +95,7 @@ enum LocalNetworkAuthorization {
             for (index, browser) in browsers.enumerated() {
                 let type = serviceTypes[index]
                 browser.stateUpdateHandler = { state in
-                    logger.info("browser \(type, privacy: .public) state: \(String(describing: state), privacy: .public)")
+                    logger.notice("browser \(type, privacy: .public) state: \(String(describing: state), privacy: .public)")
                     if let result = classify(browserState: state, hasResults: !browser.browseResults.isEmpty) {
                         finish(result)
                     }

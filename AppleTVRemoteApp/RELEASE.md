@@ -51,9 +51,12 @@ spctl -a -vv -t exec dist/Atmo.app                                              
 1. `tccutil reset LocalNetwork io.bino.atmo`
 2. Copy `dist/Atmo.app` to `/Applications` and launch from Finder.
 3. The Local Network permission prompt should appear; grant it — devices should list within ~5 s.
-4. If scanning fails immediately, inspect `log show --predicate 'subsystem == "io.bino.atmo"' --last 10m`
-   and try the spawn-strategy fallback: `defaults write io.bino.atmo ATMO_SPAWN_STRATEGY disclaiming`, relaunch.
-   (`defaults delete io.bino.atmo ATMO_SPAWN_STRATEGY` restores the default.)
+4. If scanning fails, inspect `log show --predicate 'subsystem == "io.bino.atmo"' --last 10m`.
+   The default spawn strategy is `disclaiming` (Foundation Process, the verified-working v1.0.0
+   behavior); `defaults write io.bino.atmo ATMO_SPAWN_STRATEGY inheriting` switches to the
+   posix_spawn attribution mode for A/B debugging, `defaults delete io.bino.atmo ATMO_SPAWN_STRATEGY`
+   restores the default. (For the sandboxed app the defaults domain lives in
+   `~/Library/Containers/io.bino.atmo/Data/Library/Preferences/`.)
 5. Deny the permission and relaunch: the in-app "no Local Network access" banner should
    appear and a scan must stop with an actionable message (never an endless spinner).
 
