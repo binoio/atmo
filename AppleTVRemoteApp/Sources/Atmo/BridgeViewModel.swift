@@ -1,9 +1,7 @@
 @preconcurrency import Foundation
 import ServiceManagement
 import SwiftUI
-#if DEBUG
 import AppKit
-#endif
 
 enum LaunchAtLoginState {
     case enabled
@@ -567,6 +565,41 @@ final class BridgeViewModel: ObservableObject {
                 statusMessage = error.localizedDescription
             }
         }
+    }
+
+    /// System Settings deep link for Privacy & Security ▸ Local Network.
+    static let localNetworkSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
+    )!
+
+    /// Injectable so tests can assert the URL without opening System Settings.
+    var openURLHandler: (URL) -> Void = { NSWorkspace.shared.open($0) }
+
+    /// Presents a confirmation, then (under App Sandbox we can't call `tccutil`
+    /// or relaunch ourselves) deep-links to System Settings so the user can reset
+    /// Atmo's Local Network permission and relaunch.
+    func resetLocalNetworkPermission() {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Reset Local Network Permission"
+        alert.informativeText = """
+        macOS controls Local Network access from System Settings. Atmo will open \
+        System Settings ▸ Privacy & Security ▸ Local Network. Turn Atmo off and back \
+        on there, then quit and reopen Atmo for the change to take effect.
+        """
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Cancel")
+
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        performLocalNetworkPermissionReset()
+    }
+
+    /// The side-effecting part, split out so it is testable without a modal.
+    func performLocalNetworkPermissionReset() {
+        openURLHandler(Self.localNetworkSettingsURL)
+        statusMessage = "Toggle Atmo under Local Network, then quit and reopen Atmo."
     }
 
     private func cancelPendingPairing(for device: BridgeDevice?, showMessage: Bool) {

@@ -70,6 +70,20 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
             }
 
+            Button("Reset Local Network Permission…") {
+                viewModel.resetLocalNetworkPermission()
+            }
+            .buttonStyle(.bordered)
+            .padding(.vertical, 4)
+
+            if let status = viewModel.statusMessage, !status.isEmpty {
+                Text(status)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+            }
+
 #if DEBUG
             Section("Development") {
                 Toggle(
