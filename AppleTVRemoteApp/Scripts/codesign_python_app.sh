@@ -13,6 +13,7 @@ IDENTITY="${2:?Missing signing identity}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENTITLEMENTS="${SCRIPT_DIR}/../Support/Atmo.entitlements"
+INHERIT_ENTITLEMENTS="${SCRIPT_DIR}/../Support/Inherit.entitlements"
 
 if [[ ! -d "$APP_BUNDLE" ]]; then
     echo "Error: App bundle not found: $APP_BUNDLE" >&2
@@ -21,6 +22,11 @@ fi
 
 if [[ ! -f "$ENTITLEMENTS" ]]; then
     echo "Error: Entitlements file not found: $ENTITLEMENTS" >&2
+    exit 1
+fi
+
+if [[ ! -f "$INHERIT_ENTITLEMENTS" ]]; then
+    echo "Error: Inherit entitlements file not found: $INHERIT_ENTITLEMENTS" >&2
     exit 1
 fi
 
@@ -50,7 +56,9 @@ echo "Step 2/4: Signing dynamic libraries (.dylib)..."
 sign_files "*.dylib" ".dylib"
 
 # ── Step 3: All remaining Mach-O executables ──────────────────────────
-echo "Step 3/4: Signing Mach-O executables..."
+# These are the binaries the sandboxed app spawns (python3, etc.), so they
+# must carry the inherit entitlement or the sandbox denies exec.
+echo "Step 3/4: Signing Mach-O executables (with inherit entitlements)..."
 MACHO_COUNT=0
 
 # Find all regular files under the Python directories and sign any Mach-O binary.
@@ -60,7 +68,7 @@ while IFS= read -r -d '' file; do
         continue
     fi
     if file "$file" | grep -q "Mach-O"; then
-        codesign "${CODESIGN_FLAGS[@]}" "$file"
+        codesign "${CODESIGN_FLAGS[@]}" --entitlements "$INHERIT_ENTITLEMENTS" "$file"
         ((MACHO_COUNT++))
     fi
 done < <(find "$APP_BUNDLE" -type f \

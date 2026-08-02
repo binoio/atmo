@@ -198,6 +198,11 @@ final class LaunchAtLoginTestController: @unchecked Sendable {
     var unregisterCalls: Int = 0
 }
 
+@MainActor
+final class OpenedURLBox {
+    var value: URL?
+}
+
 final class BridgeViewModelTests: XCTestCase {
     func makeViewModel(
         service: MockBridgeService,
@@ -1035,5 +1040,61 @@ final class BridgeViewModelTests: XCTestCase {
             // This test serves as documentation for future implementation requirements
             XCTAssertTrue(true, "Mini Atmo window restoration is currently disabled - see TODO comments")
         }
+    }
+
+    func testResetLocalNetworkPermissionOpensSettingsAndSetsStatus() async {
+        let mockService = MockBridgeService()
+        let (viewModel, _) = await makeViewModel(service: mockService)
+
+        let result: (url: URL?, message: String?, expectedURL: URL) = await MainActor.run {
+            let box = OpenedURLBox()
+            viewModel.openURLHandler = { box.value = $0 }
+            viewModel.performLocalNetworkPermissionReset()
+            return (box.value, viewModel.statusMessage, BridgeViewModel.localNetworkSettingsURL)
+        }
+
+        XCTAssertEqual(result.url, result.expectedURL)
+        XCTAssertEqual(
+            result.message,
+            "Toggle Atmo under Local Network, then quit and reopen Atmo."
+        )
+    }
+}
+
+final class InheritingProcessTests: XCTestCase {
+    func testRunCapturesStdoutAndExitStatus() throws {
+        let process = InheritingProcess()
+        process.executableURL = URL(fileURLWithPath: "/bin/echo")
+        process.arguments = ["hello-atmo"]
+        let stdout = Pipe()
+        process.standardOutput = stdout
+
+        try process.run()
+        // Parent's copy of the write end is closed in run(), so this returns at EOF.
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        let output = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(output, "hello-atmo")
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertFalse(process.isRunning)
+    }
+
+    func testRunPropagatesNonzeroExitStatus() throws {
+        let process = InheritingProcess()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "exit 3"]
+
+        try process.run()
+        process.waitUntilExit()
+
+        XCTAssertEqual(process.terminationStatus, 3)
+    }
+
+    func testRunThrowsWhenExecutableMissing() {
+        let process = InheritingProcess()
+        process.executableURL = URL(fileURLWithPath: "/nonexistent/atmo-binary")
+        XCTAssertThrowsError(try process.run())
     }
 }
