@@ -138,7 +138,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWindow.allowsAutomaticWindowTabbing = false
         // Trigger the Local Network permission prompt from the app process (which
         // carries the usage description) rather than waiting for the first scan.
-        LocalNetworkAuthorization.prewarm()
+        // The result is logged; the view model runs its own check for the UI.
+        Task.detached {
+            _ = await LocalNetworkAuthorization.check()
+        }
     }
 
     func registerSupplementaryWindowController(_ controller: NSWindowController) {
@@ -166,7 +169,12 @@ private extension AtmoApp {
 
         let fileManager = FileManager.default
         let systemApplications = URL(fileURLWithPath: "/Applications", isDirectory: true)
-        let userApplications = fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
+        // Under App Sandbox, homeDirectoryForCurrentUser is the container home
+        // (~/Library/Containers/…), which would make ~/Applications never match.
+        // Resolve the real home via the passwd database instead.
+        let realHome = String(cString: getpwuid(getuid()).pointee.pw_dir)
+        let userApplications = URL(fileURLWithPath: realHome, isDirectory: true)
+            .appendingPathComponent("Applications", isDirectory: true)
 
         let allowedDirectories = [systemApplications, userApplications]
         let isInApprovedLocation = allowedDirectories.contains { allowed in

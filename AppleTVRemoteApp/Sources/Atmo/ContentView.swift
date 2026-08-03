@@ -45,6 +45,7 @@ struct ContentView: View {
             self.handleIncomingURL(url)
         }
         .task {
+            await viewModel.checkLocalNetworkPermission()
             await viewModel.refreshDevices()
         }
         .onChange(of: viewModel.useMockBridge) { _ in
@@ -234,6 +235,7 @@ struct ContentView: View {
     private var detailContent: some View {
         ScrollView {
             VStack(spacing: 16) {
+                permissionBanner
                 commandGrid
                 powerPanel
                 statusBanner
@@ -603,7 +605,6 @@ struct ContentView: View {
 
     @ViewBuilder
     private var statusBanner: some View {
-#if DEBUG
         if let status = viewModel.statusMessage {
             Text(status)
                 .padding()
@@ -611,9 +612,31 @@ struct ContentView: View {
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(8)
         }
-#else
-        EmptyView()
-#endif
+    }
+
+    @ViewBuilder
+    private var permissionBanner: some View {
+        if viewModel.localNetworkPermission == .denied {
+            HStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Atmo doesn't have Local Network access")
+                        .font(.headline)
+                    Text("Device discovery needs the Local Network permission.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Open Settings") {
+                    viewModel.resetLocalNetworkPermission()
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity)
+            .background(Color.yellow.opacity(0.12))
+            .cornerRadius(8)
+        }
     }
 }
 

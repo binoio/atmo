@@ -27,6 +27,62 @@ struct BridgeError: Error, LocalizedError {
     var errorDescription: String? { message }
 }
 
+struct BridgeTimeoutError: Error, LocalizedError {
+    var errorDescription: String? { "The operation timed out." }
+}
+
+/// Accumulates pipe output across readability callbacks; the callbacks and the
+/// final reader run on different queues.
+private final class PipeBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = Data()
+
+    func append(_ data: Data) {
+        lock.lock()
+        storage.append(data)
+        lock.unlock()
+    }
+
+    var data: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
+/// Wraps a `CheckedContinuation` so that racing completion paths (child exit,
+/// spawn failure, watchdog timeout) resume it exactly once.
+private final class ContinuationGuard<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Error>?
+
+    init(_ continuation: CheckedContinuation<T, Error>) {
+        self.continuation = continuation
+    }
+
+    @discardableResult
+    func resume(returning value: T) -> Bool {
+        guard let continuation = take() else { return false }
+        continuation.resume(returning: value)
+        return true
+    }
+
+    @discardableResult
+    func resume(throwing error: Error) -> Bool {
+        guard let continuation = take() else { return false }
+        continuation.resume(throwing: error)
+        return true
+    }
+
+    private func take() -> CheckedContinuation<T, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        let taken = continuation
+        continuation = nil
+        return taken
+    }
+}
+
 struct BridgeDevice: Identifiable, Codable, Hashable {
     let id: String
     let name: String
@@ -266,13 +322,13 @@ private struct PairingKey: Hashable {
 }
 
 private final class InteractivePairSession: @unchecked Sendable {
-    let process: InheritingProcess
+    let process: any BridgeProcess
     let stdinPipe: Pipe
     let stdoutPipe: Pipe
     let stderrPipe: Pipe
     var stdoutBuffer = Data()
 
-    init(process: InheritingProcess, stdinPipe: Pipe, stdoutPipe: Pipe, stderrPipe: Pipe) {
+    init(process: any BridgeProcess, stdinPipe: Pipe, stdoutPipe: Pipe, stderrPipe: Pipe) {
         self.process = process
         self.stdinPipe = stdinPipe
         self.stdoutPipe = stdoutPipe
@@ -304,14 +360,14 @@ private struct CommandSessionKey: Hashable {
 }
 
 private final class CommandSession: @unchecked Sendable {
-    let process: InheritingProcess
+    let process: any BridgeProcess
     let stdinPipe: Pipe
     let stdoutPipe: Pipe
     let stderrPipe: Pipe
     var stdoutBuffer = Data()
     var waitingContinuation: CheckedContinuation<Data, Error>?
 
-    init(process: InheritingProcess, stdinPipe: Pipe, stdoutPipe: Pipe, stderrPipe: Pipe) {
+    init(process: any BridgeProcess, stdinPipe: Pipe, stdoutPipe: Pipe, stderrPipe: Pipe) {
         self.process = process
         self.stdinPipe = stdinPipe
         self.stdoutPipe = stdoutPipe
@@ -353,9 +409,7 @@ actor BridgeService: BridgeServiceProtocol {
     private let pythonExecutable: URL
     private let bridgeModule: String
     private let environmentOverrides: [String: String]
-#if DEBUG
     private let logger = Logger(subsystem: "io.bino.atmo", category: "BridgeService")
-#endif
     private var interactivePairingSessions: [PairingKey: InteractivePairSession] = [:]
     private var commandSessions: [CommandSessionKey: CommandSession] = [:]
 
@@ -464,6 +518,9 @@ actor BridgeService: BridgeServiceProtocol {
 
         var overrides: [String: String] = [:]
         overrides["PYTHONUNBUFFERED"] = "1"
+        // The bundle is read-only under App Sandbox; without this python tries
+        // (and is denied) to write __pycache__ next to every imported module.
+        overrides["PYTHONDONTWRITEBYTECODE"] = "1"
 
         // Point PYTHONHOME at the embedded framework so standalone Python
         // builds don't emit "Could not find platform dependent libraries" on stderr.
@@ -506,9 +563,25 @@ actor BridgeService: BridgeServiceProtocol {
         return nil
     }
 
+    /// Timeout handed to `pybridge scan --timeout` (pyatv's mDNS scan window).
+    static let pythonScanTimeout: TimeInterval = 5
+    /// Extra time the Swift watchdog allows beyond the python-side timeout
+    /// (interpreter startup, JSON serialization) before killing the child.
+    static let scanWatchdogGrace: TimeInterval = 10
+
+    /// Exposed for tests: the exact argv `scan` hands to the bridge.
+    func scanArguments(mock: Bool) -> [String] {
+        bridgeArguments(mock: mock, command: .scan)
+            + ["--timeout", String(Int(Self.pythonScanTimeout))]
+    }
+
     func scan(mock: Bool = false) async throws -> [BridgeDevice] {
         debugLog("scan command (mock=\(mock))")
-        let data = try await runBridge(arguments: bridgeArguments(mock: mock, command: .scan))
+        let arguments = scanArguments(mock: mock)
+        let data = try await runBridge(
+            arguments: arguments,
+            timeout: Self.pythonScanTimeout + Self.scanWatchdogGrace
+        )
         let response = try JSONDecoder().decode(ScanResponse.self, from: data)
         debugLog("scan completed with \(response.devices.count) device(s)")
         return response.devices
@@ -630,7 +703,7 @@ actor BridgeService: BridgeServiceProtocol {
         var arguments = bridgeArguments(mock: key.mock, command: .session)
         arguments += ["--identifier", identifier]
 
-        let process = InheritingProcess()
+        let process = BridgeSpawnStrategy.current.makeProcess()
         process.executableURL = pythonExecutable
         process.arguments = arguments
 
@@ -767,6 +840,7 @@ actor BridgeService: BridgeServiceProtocol {
         let message = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Command session error"
 
         if BridgeService.shouldIgnoreStderrMessage(message) {
+            bridgeLog("command session stderr ignored: \(String(message.prefix(300)))")
             return
         }
 
@@ -882,7 +956,7 @@ actor BridgeService: BridgeServiceProtocol {
     arguments.append("--interactive")
     arguments += ["--identifier", identifier, "--protocol", protocolName]
 
-        let process = InheritingProcess()
+        let process = BridgeSpawnStrategy.current.makeProcess()
         process.executableURL = pythonExecutable
         process.arguments = arguments
 
@@ -908,7 +982,7 @@ actor BridgeService: BridgeServiceProtocol {
         return InteractivePairSession(process: process, stdinPipe: stdinPipe, stdoutPipe: stdoutPipe, stderrPipe: stderrPipe)
     }
 
-    private func sessionMonitorOutput(session process: InheritingProcess, pipe: Pipe) {
+    private func sessionMonitorOutput(session process: any BridgeProcess, pipe: Pipe) {
         pipe.fileHandleForReading.readabilityHandler = { _ in }
     }
     private func handleInteractiveTermination(for key: PairingKey) async {
@@ -964,6 +1038,7 @@ actor BridgeService: BridgeServiceProtocol {
                 let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 if BridgeService.shouldIgnoreStderrMessage(trimmedMessage) {
+                    Task { await actorSelf.bridgeLog("interactive stderr ignored: \(String(trimmedMessage.prefix(300)))") }
                     return
                 }
 
@@ -1001,60 +1076,127 @@ actor BridgeService: BridgeServiceProtocol {
             return true
         }
 
+        // sitecustomize problems are startup warnings, not protocol failures;
+        // site.py already swallowed the exception and the interpreter is fine.
+        // (Covers both python's "Error in sitecustomize;…" report and our own
+        // traceback, whose frames reference sitecustomize.py.)
+        if message.contains("sitecustomize") {
+            return true
+        }
+
         return false
     }
 
-    private func runBridge(arguments: [String]) async throws -> Data {
+    /// Runs a one-shot bridge command and returns its stdout.
+    ///
+    /// Robustness guarantees (each has bitten this app before):
+    /// - stdout/stderr are drained concurrently while the child runs, so a
+    ///   child that emits more than a pipe buffer of output can always exit.
+    /// - A watchdog terminates the child (SIGTERM, then SIGKILL) and throws
+    ///   `BridgeTimeoutError` if it outlives `timeout`, so the UI can never
+    ///   wait forever. Pass `nil` to disable (tests only).
+    func runBridge(arguments: [String], timeout: TimeInterval? = 60) async throws -> Data {
+        let process = BridgeSpawnStrategy.current.makeProcess()
+        process.executableURL = pythonExecutable
+        process.arguments = arguments
+        let baseEnvironment = ProcessInfo.processInfo.environment
+        process.environment = baseEnvironment.merging(environmentOverrides) { new, _ in new }
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        let command = arguments.prefix(while: { !$0.hasPrefix("--") }).joined(separator: " ")
+        bridgeLog("bridge launch strategy=\(BridgeSpawnStrategy.current.rawValue) command=\(command)")
+
+        let logger = self.logger
         return try await withCheckedThrowingContinuation { continuation in
-            let process = InheritingProcess()
-            process.executableURL = pythonExecutable
-            process.arguments = arguments
-            let baseEnvironment = ProcessInfo.processInfo.environment
-            process.environment = baseEnvironment.merging(environmentOverrides) { new, _ in new }
+            let guardedContinuation = ContinuationGuard(continuation)
+            let stdoutBuffer = PipeBuffer()
+            let stderrBuffer = PipeBuffer()
 
-            let stdout = Pipe()
-            let stderr = Pipe()
+            // One leave() each for stdout EOF, stderr EOF, and child exit; the
+            // notify block is the single success/failure completion point.
+            let completionGroup = DispatchGroup()
+            completionGroup.enter()
+            completionGroup.enter()
+            completionGroup.enter()
 
-            process.standardOutput = stdout
-            process.standardError = stderr
-
-            process.terminationHandler = { [weak self] process in
-                do {
-                    let data = try stdout.fileHandleForReading.readToEnd() ?? Data()
-                    if process.terminationStatus == 0 {
-                        guard let self else {
-                            continuation.resume(returning: data)
-                            return
-                        }
-                        let summary = BridgeService.summarize(data: data)
-                        Task { await self.debugLog("bridge process succeeded status=0 output=\(summary)") }
-                        continuation.resume(returning: data)
-                    } else {
-                        let errorData = try stderr.fileHandleForReading.readToEnd() ?? Data()
-                        let message = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if let self {
-                            Task { await self.debugLog("bridge process failed status=\(process.terminationStatus) error=\(trimmed)") }
-                        }
-                        continuation.resume(throwing: BridgeError(message: trimmed))
-                    }
-                } catch {
-                    if let self {
-                        Task { await self.debugLog("bridge process read error: \(error.localizedDescription)") }
-                    }
-                    continuation.resume(throwing: error)
+            stdout.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty {
+                    handle.readabilityHandler = nil
+                    completionGroup.leave()
+                } else {
+                    stdoutBuffer.append(data)
                 }
             }
 
+            stderr.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty {
+                    handle.readabilityHandler = nil
+                    completionGroup.leave()
+                } else {
+                    stderrBuffer.append(data)
+                }
+            }
+
+            process.terminationHandler = { _ in
+                completionGroup.leave()
+            }
+
             do {
-                debugLog("Launching bridge process with arguments: \(arguments.joined(separator: " "))")
                 try process.run()
             } catch {
-                debugLog("Failed to start bridge process: \(error.localizedDescription)")
-                continuation.resume(throwing: error)
+                stdout.fileHandleForReading.readabilityHandler = nil
+                stderr.fileHandleForReading.readabilityHandler = nil
+                logger.error("bridge launch failed: \(error.localizedDescription, privacy: .public)")
+                guardedContinuation.resume(throwing: error)
                 return
             }
+
+            completionGroup.notify(queue: .global()) {
+                let status = process.terminationStatus
+                if status == 0 {
+                    logger.notice("bridge exited status=0 stdout=\(stdoutBuffer.data.count, privacy: .public) bytes")
+                    if !stderrBuffer.data.isEmpty,
+                       let stderrText = String(data: stderrBuffer.data, encoding: .utf8)?
+                           .trimmingCharacters(in: .whitespacesAndNewlines),
+                       !stderrText.isEmpty {
+                        logger.notice("bridge stderr (ignored, success): \(String(stderrText.prefix(300)), privacy: .public)")
+                    }
+                    guardedContinuation.resume(returning: stdoutBuffer.data)
+                } else {
+                    let message = String(data: stderrBuffer.data, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let tail = message.count > 300 ? "…" + String(message.suffix(300)) : message
+                    logger.error("bridge exited status=\(status, privacy: .public) stderr=\(tail, privacy: .public)")
+                    let errorMessage = message.isEmpty ? "Bridge process exited with status \(status)" : message
+                    guardedContinuation.resume(throwing: BridgeError(message: errorMessage))
+                }
+            }
+
+            if let timeout {
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                    guard guardedContinuation.resume(throwing: BridgeTimeoutError()) else { return }
+                    logger.error("bridge watchdog fired after \(timeout, privacy: .public)s; terminating pid=\(process.processIdentifier, privacy: .public)")
+                    process.terminate()
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                        process.kill9()
+                    }
+                }
+            }
         }
+    }
+
+    /// Curated lifecycle events, logged in release builds too so users can
+    /// diagnose with `log show --predicate 'subsystem == "io.bino.atmo"'`.
+    /// Must not include device identifiers or credentials.
+    private func bridgeLog(_ message: String) {
+        logger.notice("\(message, privacy: .public)")
     }
 
 #if DEBUG
