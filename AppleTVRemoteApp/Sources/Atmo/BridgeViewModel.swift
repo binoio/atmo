@@ -610,9 +610,8 @@ final class BridgeViewModel: ObservableObject {
         back on there, then reopen Atmo. Choose "Open Settings and Quit" to have \
         Atmo quit for you once Settings is open.
 
-        For a full reset (so the permission prompt appears again), run this in \
-        Terminal instead, then relaunch Atmo:
-        tccutil reset LocalNetwork io.bino.atmo
+        (macOS does not support resetting Local Network from the command line; \
+        the toggle in System Settings is the only reset.)
         """
         alert.addButton(withTitle: "Open Settings and Quit")
         alert.addButton(withTitle: "Open System Settings")

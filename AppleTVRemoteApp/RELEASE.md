@@ -48,7 +48,9 @@ spctl -a -vv -t exec dist/Atmo.app                                              
 
 ### On-device verification (required before publishing)
 
-1. `tccutil reset LocalNetwork io.bino.atmo`
+1. Clear the previous grant: System Settings ▸ Privacy & Security ▸ Local Network ▸ toggle
+   Atmo off. (`tccutil` can NOT reset Local Network on modern macOS — the per-service form
+   fails and `reset All io.bino.atmo` silently leaves the grant intact.)
 2. Copy `dist/Atmo.app` to `/Applications` and launch from Finder.
 3. The Local Network permission prompt should appear; grant it — devices should list within ~5 s.
 4. If scanning fails, inspect `log show --predicate 'subsystem == "io.bino.atmo"' --last 10m`.
