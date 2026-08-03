@@ -840,6 +840,7 @@ actor BridgeService: BridgeServiceProtocol {
         let message = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Command session error"
 
         if BridgeService.shouldIgnoreStderrMessage(message) {
+            bridgeLog("command session stderr ignored: \(String(message.prefix(300)))")
             return
         }
 
@@ -1037,6 +1038,7 @@ actor BridgeService: BridgeServiceProtocol {
                 let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 if BridgeService.shouldIgnoreStderrMessage(trimmedMessage) {
+                    Task { await actorSelf.bridgeLog("interactive stderr ignored: \(String(trimmedMessage.prefix(300)))") }
                     return
                 }
 
@@ -1071,6 +1073,14 @@ actor BridgeService: BridgeServiceProtocol {
 
         // Standalone Python builds emit this harmless warning on every launch.
         if message.contains("Could not find platform dependent libraries") {
+            return true
+        }
+
+        // sitecustomize problems are startup warnings, not protocol failures;
+        // site.py already swallowed the exception and the interpreter is fine.
+        // (Covers both python's "Error in sitecustomize;…" report and our own
+        // traceback, whose frames reference sitecustomize.py.)
+        if message.contains("sitecustomize") {
             return true
         }
 
@@ -1152,6 +1162,12 @@ actor BridgeService: BridgeServiceProtocol {
                 let status = process.terminationStatus
                 if status == 0 {
                     logger.notice("bridge exited status=0 stdout=\(stdoutBuffer.data.count, privacy: .public) bytes")
+                    if !stderrBuffer.data.isEmpty,
+                       let stderrText = String(data: stderrBuffer.data, encoding: .utf8)?
+                           .trimmingCharacters(in: .whitespacesAndNewlines),
+                       !stderrText.isEmpty {
+                        logger.notice("bridge stderr (ignored, success): \(String(stderrText.prefix(300)), privacy: .public)")
+                    }
                     guardedContinuation.resume(returning: stdoutBuffer.data)
                 } else {
                     let message = String(data: stderrBuffer.data, encoding: .utf8)?
