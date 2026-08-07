@@ -8,6 +8,7 @@ Atmo is a macOS SwiftUI application for discovering and controlling Apple TV dev
 - Discover and pair Apple TV devices on the local network.
 - Control playback via remote buttons or keyboard shortcuts.
 - Print a formatted report of discovered devices.
+- Automatic updates via Sparkle, configurable in Settings.
 
 ## Architecture 
 
@@ -67,4 +68,14 @@ Use `bash AppleTVRemoteApp/Scripts/release.sh` to build an `.app` bundle in `dis
 ### Signed Releases
 
 For distribution outside the Mac App Store, Atmo supports code signing and notarization with Apple Developer ID. See [docs/SIGNING.md](docs/SIGNING.md) for setup instructions.
+
+### Releasing an update
+
+Atmo ships auto-updates with Sparkle 2: an EdDSA-signed appcast at `docs/appcast.xml` is served from GitHub Pages (`https://binoio.github.io/atmo/appcast.xml`) and the zips live on GitHub Releases.
+
+1. Bump `VERSION`
+2. Write `ReleaseNotes/Atmo-X.Y.Z.md` (GitHub release body) and `ReleaseNotes/Atmo-X.Y.Z.html` (embedded in the Sparkle appcast)
+3. Commit, then run `zsh AppleTVRemoteApp/Scripts/release.sh` — it builds, signs (including the embedded Python and Sparkle.framework), notarizes, generates the appcast, tags, publishes the GitHub release, and pushes the updated appcast
+
+One-time machine prerequisites: the Developer ID Application identity and Sparkle EdDSA private key in the login Keychain, an `atmo-notary` notarytool keychain profile, and an authenticated `gh` CLI.
 

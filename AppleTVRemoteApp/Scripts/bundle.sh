@@ -19,6 +19,18 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 cp "${BUILD_DIR}/${ARTIFACT_NAME}" "${MACOS_DIR}/${ARTIFACT_NAME}"
 chmod +x "${MACOS_DIR}/${ARTIFACT_NAME}"
 
+# Embed Sparkle.framework (the executable links it via @rpath/../Frameworks)
+FRAMEWORKS_DIR="${CONTENTS_DIR}/Frameworks"
+SPARKLE_FRAMEWORK=$(find "${PROJECT_ROOT}/AppleTVRemoteApp/.build" "${PROJECT_ROOT}/AppleTVRemoteApp/build" -type d -name "Sparkle.framework" -path "*artifacts*" -not -path "*dSYM*" 2>/dev/null | head -1)
+if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
+    echo "error: Sparkle.framework not found under AppleTVRemoteApp/.build; run 'swift build --package-path AppleTVRemoteApp' first" >&2
+    exit 1
+fi
+mkdir -p "${FRAMEWORKS_DIR}"
+rm -rf "${FRAMEWORKS_DIR}/Sparkle.framework"
+# ditto preserves the framework's Versions symlink structure; cp -R would not
+ditto "$SPARKLE_FRAMEWORK" "${FRAMEWORKS_DIR}/Sparkle.framework"
+
 # Copy resources
 rsync -a --delete "${PROJECT_ROOT}/AppleTVRemoteApp/Sources/Atmo/Resources/" "${RESOURCES_DIR}/"
 
@@ -62,6 +74,18 @@ fi
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "${CONTENTS_DIR}/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "${CONTENTS_DIR}/Info.plist"
+
+# Sparkle update feed and EdDSA public key (env-overridable for testing)
+SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-https://binoio.github.io/atmo/appcast.xml}"
+SPARKLE_ED_PUBLIC_KEY="${SPARKLE_ED_PUBLIC_KEY:-nDAE5HXFYg6pBQbAFtyEObXbHu9N7TM+7zUivRcRqNA=}"
+/usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "${CONTENTS_DIR}/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :SUFeedURL string $SPARKLE_FEED_URL" "${CONTENTS_DIR}/Info.plist"
+/usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "${CONTENTS_DIR}/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_ED_PUBLIC_KEY" "${CONTENTS_DIR}/Info.plist"
+# Sandboxed app: Sparkle must install updates through its InstallerLauncher
+# XPC service (paired with the mach-lookup exception in Atmo.entitlements)
+/usr/libexec/PlistBuddy -c "Delete :SUEnableInstallerLauncherService" "${CONTENTS_DIR}/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :SUEnableInstallerLauncherService bool true" "${CONTENTS_DIR}/Info.plist"
 
 echo "APPL????" > "${CONTENTS_DIR}/PkgInfo"
 echo "✓ Bundle created at ${APP_BUNDLE} (version $VERSION)"

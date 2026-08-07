@@ -3,6 +3,10 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var viewModel: BridgeViewModel
 
+    /// Extra "Updates" section injected by the Developer ID shell (Sparkle);
+    /// nil omits it entirely, keeping this view free of update-mechanism code.
+    var updatesSection: AnyView? = nil
+
     var body: some View {
         Form {
             Toggle(
@@ -93,6 +97,10 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
+            }
+
+            if let updatesSection {
+                updatesSection
             }
 
 #if DEBUG

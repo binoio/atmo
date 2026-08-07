@@ -4,7 +4,7 @@ import Darwin
 
 @main
 struct AtmoApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @NSApplicationDelegateAdaptor(SparkleAppDelegate.self) private var appDelegate
     @StateObject private var bridge: BridgeViewModel
 
     @MainActor
@@ -30,20 +30,27 @@ struct AtmoApp: App {
             // - Use CommandGroup(replacing: .help) to modify default Help menu items
             // - Use CommandMenu("Name") only for truly custom menus (e.g., "Remote")
             // - Avoid duplicate menus - always modify defaults first before adding customs
-            CommandGroup(replacing: .sidebar) {
-                Button("Hide Sidebar") {
-                    bridge.sidebarVisible.toggle()
+            // Grouped with the sidebar commands to stay within the
+            // CommandsBuilder ten-element limit
+            Group {
+                CommandGroup(after: .appInfo) {
+                    CheckForUpdatesView(viewModel: appDelegate.updaterViewModel)
                 }
-                .keyboardShortcut("s", modifiers: [.control, .command])
-                
-                Divider()
-                
-                // TODO: Mini Atmo feature - disabled until window restoration works properly
-                // Toggle("Mini Atmo", isOn: Binding(
-                //     get: { bridge.isMiniMode },
-                //     set: { bridge.isMiniMode = $0 }
-                // ))
-                // .keyboardShortcut("m", modifiers: [.command, .option])
+                CommandGroup(replacing: .sidebar) {
+                    Button("Hide Sidebar") {
+                        bridge.sidebarVisible.toggle()
+                    }
+                    .keyboardShortcut("s", modifiers: [.control, .command])
+
+                    Divider()
+
+                    // TODO: Mini Atmo feature - disabled until window restoration works properly
+                    // Toggle("Mini Atmo", isOn: Binding(
+                    //     get: { bridge.isMiniMode },
+                    //     set: { bridge.isMiniMode = $0 }
+                    // ))
+                    // .keyboardShortcut("m", modifiers: [.command, .option])
+                }
             }
             CommandGroup(replacing: .windowSize) { }
             CommandGroup(replacing: .windowArrangement) { }
@@ -124,14 +131,16 @@ struct AtmoApp: App {
         }
 
         Settings {
-            SettingsView()
+            SettingsView(updatesSection: AnyView(UpdatesSectionView(viewModel: appDelegate.updaterViewModel)))
                 .environmentObject(bridge)
         }
     }
 }
 
+/// Base app delegate, free of update-mechanism specifics. The Developer ID
+/// build subclasses this as `SparkleAppDelegate` to add Sparkle auto-updates.
 @MainActor
-private final class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate {
     private var supplementaryWindowControllers: [NSWindowController] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
