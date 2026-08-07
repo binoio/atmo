@@ -1,8 +1,10 @@
 AppleTVRemoteApp/Sources/Atmo/Resources/Python/
 AppleTVRemoteApp/.build/
 .build/
+AppleTVRemoteApp/build/
 AppleTVRemoteApp/dist/
 AppleTVRemoteApp/dist-debug/
+dist/
 .venv/
 **/.venv/
 __pycache__/

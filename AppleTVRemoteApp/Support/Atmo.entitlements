@@ -8,5 +8,11 @@
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
+	<!-- Sparkle in a sandboxed app: allow talking to its installer XPC services -->
+	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+	<array>
+		<string>io.bino.atmo-spks</string>
+		<string>io.bino.atmo-spki</string>
+	</array>
 </dict>
 </plist>

@@ -42,11 +42,11 @@ sign_files() {
 }
 
 # ── Step 1: Python shared-object modules ──────────────────────────────
-echo "Step 1/4: Signing Python modules (.so)..."
+echo "Step 1/5: Signing Python modules (.so)..."
 sign_files "*.so" ".so"
 
 # ── Step 2: Dynamic libraries ─────────────────────────────────────────
-echo "Step 2/4: Signing dynamic libraries (.dylib)..."
+echo "Step 2/5: Signing dynamic libraries (.dylib)..."
 sign_files "*.dylib" ".dylib"
 
 # ── Step 3: All remaining Mach-O executables ──────────────────────────
@@ -56,7 +56,7 @@ sign_files "*.dylib" ".dylib"
 # Signing them with app-sandbox (with or without inherit variations) makes
 # secinit try to bootstrap a standalone container for a bare interpreter,
 # which kills the child instantly with exit status 5 and no stderr.
-echo "Step 3/4: Signing Mach-O executables (hardened runtime, no entitlements)..."
+echo "Step 3/5: Signing Mach-O executables (hardened runtime, no entitlements)..."
 MACHO_COUNT=0
 
 # Find all regular files under the Python directories and sign any Mach-O binary.
@@ -78,8 +78,23 @@ if [[ $MACHO_COUNT -gt 0 ]]; then
     echo "  Signed $MACHO_COUNT Mach-O executable(s)"
 fi
 
-# ── Step 4: App bundle ────────────────────────────────────────────────
-echo "Step 4/4: Signing app bundle with entitlements..."
+# ── Step 4: Sparkle.framework internals ───────────────────────────────
+# Sparkle's helpers must be signed individually, inside-out (never --deep);
+# the XPC services keep their shipped entitlements.
+SPARKLE_FRAMEWORK="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+if [[ -d "$SPARKLE_FRAMEWORK" ]]; then
+    echo "Step 4/5: Signing Sparkle.framework..."
+    codesign "${CODESIGN_FLAGS[@]}" "$SPARKLE_FRAMEWORK/Versions/B/Autoupdate"
+    codesign "${CODESIGN_FLAGS[@]}" "$SPARKLE_FRAMEWORK/Versions/B/Updater.app"
+    codesign "${CODESIGN_FLAGS[@]}" --preserve-metadata=entitlements "$SPARKLE_FRAMEWORK/Versions/B/XPCServices/Installer.xpc"
+    codesign "${CODESIGN_FLAGS[@]}" --preserve-metadata=entitlements "$SPARKLE_FRAMEWORK/Versions/B/XPCServices/Downloader.xpc"
+    codesign "${CODESIGN_FLAGS[@]}" "$SPARKLE_FRAMEWORK"
+else
+    echo "Step 4/5: No Sparkle.framework embedded; skipping."
+fi
+
+# ── Step 5: App bundle ────────────────────────────────────────────────
+echo "Step 5/5: Signing app bundle with entitlements..."
 codesign "${CODESIGN_FLAGS[@]}" --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
 
 echo "Code signing complete (inner-to-outer)."
