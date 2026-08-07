@@ -64,12 +64,10 @@ struct UpdatesSectionView: View {
                 get: { viewModel.automaticallyChecksForUpdates },
                 set: { viewModel.automaticallyChecksForUpdates = $0 }
             ))
-            .toggleStyle(.switch)
             Toggle("Automatically download updates", isOn: Binding(
                 get: { viewModel.automaticallyDownloadsUpdates },
                 set: { viewModel.automaticallyDownloadsUpdates = $0 }
             ))
-            .toggleStyle(.switch)
             .disabled(!viewModel.automaticallyChecksForUpdates)
 
             if let lastCheck = viewModel.lastUpdateCheckDate {
