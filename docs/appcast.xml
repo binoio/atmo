@@ -4,6 +4,25 @@
     <channel>
         <title>Atmo</title>
         <item>
+            <title>1.5.0</title>
+            <pubDate>Thu, 06 Aug 2026 21:53:46 -0400</pubDate>
+            <sparkle:version>1.5.0</sparkle:version>
+            <sparkle:shortVersionString>1.5.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<h2>Atmo 1.5.0</h2>
+<p>Atmo 1.5 refreshes the Settings window with a cleaner, native layout.</p>
+
+<h3>Improved</h3>
+<ul>
+  <li><b>Redesigned Settings</b> — settings are now organized into General, Devices, Pairing &amp; Network, and Updates sections using the modern macOS grouped style</li>
+</ul>
+
+<p>Requires macOS 13 or later.</p>
+]]></description>
+            <enclosure url="https://github.com/binoio/atmo/releases/download/v1.5.0/Atmo-1.5.0.zip" length="69562225" type="application/octet-stream" sparkle:edSignature="LklkCWtXAXnOO3bGRMkC0T7KKg2pa+sUHtas5djnWG5f5Gr/qIMrZ0RORu8Xlnn6rbFPJg/Y9HGwmwUOOWtdBg=="/>
+        </item>
+        <item>
             <title>1.4.0</title>
             <pubDate>Thu, 06 Aug 2026 21:19:41 -0400</pubDate>
             <sparkle:version>1.4.0</sparkle:version>
